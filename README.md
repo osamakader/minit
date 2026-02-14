@@ -1,0 +1,2 @@
+# minit
+Minimal init system
