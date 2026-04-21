@@ -27,9 +27,17 @@ int main(int argc, char **argv)
 	const char *config_path;
 	char *env_config;
 
+	if ((argc > 2) || (strcmp(argv[1], "-h") == 0) || (strcmp(argv[1], "--help") == 0)) {
+		fprintf(stderr, "Usage: %s [config file]\n", argv[0]);
+		fprintf(stderr, "Default config: %s\n", DEFAULT_CONFIG);
+		fprintf(stderr, "Environment variable: MINIT_CONFIG\n");
+		fprintf(stderr, "Example: MINIT_CONFIG=/etc/minit.conf %s\n", argv[0]);
+		return 1;
+	}
+
 	env_config = getenv("MINIT_CONFIG");
 	config_path = env_config ? env_config : DEFAULT_CONFIG;
-	if (argc > 1)
+	if (argc == 2)
 		config_path = argv[1];
 
 	clock_gettime(CLOCK_MONOTONIC, &t0);
