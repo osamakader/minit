@@ -1,0 +1,21 @@
+# minit — example configuration
+# Copy to /etc/minit.conf and customize
+
+[service syslogd]
+exec = /sbin/syslogd -n
+restart = always
+provides = syslog
+
+[service network]
+exec = /etc/minit/network.sh
+restart = on-failure
+depends = syslog
+provides = network
+
+[service httpd]
+exec = /usr/sbin/lighttpd -f /etc/lighttpd.conf
+restart = on-failure
+depends = network
+respawn_delay = 2
+respawn_max = 5
+respawn_window = 60

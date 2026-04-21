@@ -1,0 +1,26 @@
+{
+  "services": [
+    {
+      "name": "syslogd",
+      "exec": "/sbin/syslogd -n",
+      "restart": "always",
+      "provides": "syslog"
+    },
+    {
+      "name": "network",
+      "exec": "/etc/minit/network.sh",
+      "restart": "on-failure",
+      "depends": ["syslog"],
+      "provides": "network"
+    },
+    {
+      "name": "httpd",
+      "exec": "/usr/sbin/lighttpd -f /etc/lighttpd.conf",
+      "restart": "on-failure",
+      "depends": ["network"],
+      "respawn_delay": 2,
+      "respawn_max": 5,
+      "respawn_window": 60
+    }
+  ]
+}
