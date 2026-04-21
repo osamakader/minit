@@ -27,7 +27,7 @@ int main(int argc, char **argv)
 	const char *config_path;
 	char *env_config;
 
-	if ((argc > 2) || (strcmp(argv[1], "-h") == 0) || (strcmp(argv[1], "--help") == 0)) {
+	if (argc > 2 || (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0))) {
 		fprintf(stderr, "Usage: %s [config file]\n", argv[0]);
 		fprintf(stderr, "Default config: %s\n", DEFAULT_CONFIG);
 		fprintf(stderr, "Environment variable: MINIT_CONFIG\n");
@@ -36,14 +36,20 @@ int main(int argc, char **argv)
 	}
 
 	env_config = getenv("MINIT_CONFIG");
-	config_path = env_config ? env_config : DEFAULT_CONFIG;
 	if (argc == 2)
 		config_path = argv[1];
+	else
+		config_path = (env_config && env_config[0]) ? env_config : DEFAULT_CONFIG;
+
+	if (access(config_path, F_OK) != 0) {
+		fprintf(stderr, "minit: config file does not exist: %s\n", config_path);
+		return 1;
+	}
 
 	clock_gettime(CLOCK_MONOTONIC, &t0);
 
 	if (config_parse(config_path, &cfg) < 0) {
-		fprintf(stderr, "minit: cannot parse config %s\n", config_path);
+		fprintf(stderr, "minit: cannot read or parse config %s\n", config_path);
 		return 1;
 	}
 
