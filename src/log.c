@@ -36,10 +36,10 @@ int log_init(const char *dir)
 {
 	(void)dir;
 	mkdir_p(LOG_DIR);
-	crash_fd = open(CRASH_LOG, O_WRONLY | O_CREAT | O_APPEND, 0644);
+	crash_fd = open(CRASH_LOG, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
 	if (crash_fd < 0) {
 		mkdir_p(LOG_DIR_ALT);
-		crash_fd = open(CRASH_LOG_ALT, O_WRONLY | O_CREAT | O_APPEND, 0644);
+		crash_fd = open(CRASH_LOG_ALT, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
 		strncpy(boot_path, BOOT_FILE_ALT, sizeof(boot_path) - 1);
 	}
 	return (crash_fd >= 0) ? 0 : -1;
@@ -85,7 +85,7 @@ void log_boot(int boot_ms, int total, int started)
 	char buf[128];
 	snprintf(buf, sizeof(buf), "boot_ms=%d\nservices_total=%d\nservices_started=%d\n",
 		boot_ms, total, started);
-	fd = open(boot_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	fd = open(boot_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
 	if (fd >= 0) {
 		(void)!write(fd, buf, strlen(buf));
 		close(fd);
