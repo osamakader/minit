@@ -17,6 +17,13 @@ static void on_signal(int sig)
 		supervisor_request_shutdown(g_supervisor);
 }
 
+static void on_child(int sig)
+{
+	(void)sig;
+	if (g_supervisor)
+		supervisor_wake(g_supervisor);
+}
+
 int main(int argc, char **argv)
 {
 	config_t cfg;
@@ -75,13 +82,15 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	/* no SA_RESTART: a blocking waitpid() must return EINTR on shutdown */
+	/* handlers only set flags and write to the supervisor's self-pipe */
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = on_signal;
 	sigemptyset(&sa.sa_mask);
 	sigaction(SIGTERM, &sa, NULL);
 	sigaction(SIGINT, &sa, NULL);
-	signal(SIGCHLD, SIG_DFL);
+	sa.sa_handler = on_child;
+	sa.sa_flags = SA_NOCLDSTOP | SA_RESTART;
+	sigaction(SIGCHLD, &sa, NULL);
 
 	started = supervisor_start_all(g_supervisor);
 	if (started < 0) {

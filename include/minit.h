@@ -57,6 +57,7 @@ typedef struct supervisor supervisor_t;
 supervisor_t *supervisor_create(config_t *cfg, const int *order);
 void supervisor_destroy(supervisor_t *s);
 void supervisor_request_shutdown(supervisor_t *s);
+void supervisor_wake(supervisor_t *s);  /* async-signal-safe, e.g. from SIGCHLD */
 int supervisor_start_all(supervisor_t *s);  /* returns count started, or -1 on error */
 int supervisor_run(supervisor_t *s);  /* main loop, returns when shutdown */
 

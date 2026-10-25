@@ -1,6 +1,8 @@
 #include "minit.h"
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 
 extern char **environ;
@@ -13,6 +15,8 @@ extern char **environ;
 #define BACKOFF_CAP 64
 #define SHUTDOWN_TICK_MS 100
 #define SHUTDOWN_TICKS   300  /* 30s total before SIGKILL */
+#define RESTART_MAX_MS   60000
+#define SPAWN_RETRY_MS   1000
 
 struct supervisor {
 	config_t config;
@@ -22,8 +26,17 @@ struct supervisor {
 	service_state_t states[MINIT_MAX_SERVICES];
 	int restart_count[MINIT_MAX_SERVICES];
 	time_t spawn_time[MINIT_MAX_SERVICES];
+	long long restart_at[MINIT_MAX_SERVICES];  /* monotonic ms, 0 = now */
+	int wake_fd[2];  /* self-pipe: signal handlers wake the poll() loop */
 	volatile sig_atomic_t shutdown;
 };
+
+static long long now_ms(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
 
 static int find_by_pid(const supervisor_t *s, pid_t pid)
 {
@@ -149,6 +162,15 @@ supervisor_t *supervisor_create(config_t *cfg, const int *order)
 	s = calloc(1, sizeof(*s));
 	if (!s) return NULL;
 
+	if (pipe(s->wake_fd) < 0) {
+		free(s);
+		return NULL;
+	}
+	for (i = 0; i < 2; i++) {
+		fcntl(s->wake_fd[i], F_SETFD, FD_CLOEXEC);
+		fcntl(s->wake_fd[i], F_SETFL, O_NONBLOCK);
+	}
+
 	memcpy(&s->config, cfg, sizeof(s->config));
 	s->nservices = cfg->nservices;
 	for (i = 0; i < s->nservices; i++) {
@@ -161,6 +183,8 @@ supervisor_t *supervisor_create(config_t *cfg, const int *order)
 
 void supervisor_destroy(supervisor_t *s)
 {
+	close(s->wake_fd[0]);
+	close(s->wake_fd[1]);
 	free(s);
 }
 
@@ -183,6 +207,7 @@ static void handle_exit(supervisor_t *s, int idx, int status)
 	service_t *svc = &s->config.services[idx];
 	int exit_code = 0, sig = 0;
 	time_t now = time(NULL);
+	long long delay_ms;
 
 	if (WIFEXITED(status))
 		exit_code = WEXITSTATUS(status);
@@ -202,27 +227,53 @@ static void handle_exit(supervisor_t *s, int idx, int status)
 		s->restart_count[idx] = 0;
 	s->restart_count[idx]++;
 	s->states[idx] = STATE_PENDING;
+
+	delay_ms = (long long)backoff_delay(svc, s->restart_count[idx] - 1) * 1000;
+	if (delay_ms > RESTART_MAX_MS)
+		delay_ms = RESTART_MAX_MS;
+	s->restart_at[idx] = now_ms() + delay_ms;
 }
 
-static void schedule_restart(supervisor_t *s, int idx)
+static void reap_children(supervisor_t *s)
 {
-	service_t *svc = &s->config.services[idx];
-	int delay = backoff_delay(svc, s->restart_count[idx] - 1);
-	if (delay > 0 && delay <= 60)
-		sleep((unsigned)delay);
-	else if (delay > 60)
-		sleep(60);
-	if (!s->shutdown)
-		spawn(s, idx);
-}
+	pid_t pid;
+	int status, idx;
 
-static void do_restarts(supervisor_t *s)
-{
-	int i;
-	for (i = 0; i < s->nservices && !s->shutdown; i++) {
-		if (s->states[i] == STATE_PENDING && deps_ready(s, i))
-			schedule_restart(s, i);
+	while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+		idx = find_by_pid(s, pid);
+		if (idx >= 0)
+			handle_exit(s, idx, status);
 	}
+}
+
+/* Spawn pending services that are due. Returns ms until the next one is due, or -1. */
+static int start_due(supervisor_t *s)
+{
+	long long now = now_ms(), next = -1, wait;
+	int i, idx;
+
+	/* topological order, so dependents of a service spawned here start in the same pass */
+	for (i = 0; i < s->nservices && !s->shutdown; i++) {
+		idx = s->order[i];
+		if (s->states[idx] != STATE_PENDING || !deps_ready(s, idx))
+			continue;
+		if (s->restart_at[idx] <= now) {
+			if (spawn(s, idx) == 0)
+				continue;
+			s->restart_at[idx] = now + SPAWN_RETRY_MS;
+		}
+		wait = s->restart_at[idx] - now;
+		if (next < 0 || wait < next)
+			next = wait;
+	}
+	return (int)next;
+}
+
+static void drain_wake(supervisor_t *s)
+{
+	char buf[64];
+	while (read(s->wake_fd[0], buf, sizeof(buf)) > 0)
+		;
 }
 
 static void shutdown_all(supervisor_t *s)
@@ -261,35 +312,36 @@ static void shutdown_all(supervisor_t *s)
 
 int supervisor_run(supervisor_t *s)
 {
-	pid_t pid;
-	int status;
+	struct pollfd pfd;
+	int timeout;
+
+	pfd.fd = s->wake_fd[0];
+	pfd.events = POLLIN;
 
 	while (!s->shutdown) {
-		pid = waitpid(-1, &status, 0);
-		if (pid <= 0) {
-			if (errno == EINTR)
-				continue;
-			if (errno == ECHILD) {
-				do_restarts(s);
-				sleep(1);  /* avoid busy loop when no children */
-			}
-			continue;
-		}
-
-		{
-			int idx = find_by_pid(s, pid);
-			if (idx >= 0)
-				handle_exit(s, idx, status);
-		}
-
-		do_restarts(s);
+		reap_children(s);
+		timeout = start_due(s);
+		if (s->shutdown)
+			break;
+		/* a signal arriving after reap/start writes to the pipe, so poll() still wakes */
+		if (poll(&pfd, 1, timeout) > 0)
+			drain_wake(s);
 	}
 
 	shutdown_all(s);
 	return 0;
 }
 
+void supervisor_wake(supervisor_t *s)
+{
+	int saved = errno;
+	char c = 0;
+	(void)!write(s->wake_fd[1], &c, 1);
+	errno = saved;
+}
+
 void supervisor_request_shutdown(supervisor_t *s)
 {
 	s->shutdown = 1;
+	supervisor_wake(s);
 }
