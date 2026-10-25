@@ -1,9 +1,11 @@
 #include "minit.h"
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 struct early_mount {
 	const char *source;
@@ -50,5 +52,28 @@ void system_mount_early(void)
 		if (mount(m->source, m->target, m->fstype, m->flags, m->data) < 0)
 			fprintf(stderr, "minit: cannot mount %s on %s: %s\n",
 				m->fstype, m->target, strerror(errno));
+	}
+}
+
+void system_setup_stdio(int pid1)
+{
+	int fd;
+
+	/* the kernel may start init without a console if /dev was empty at boot */
+	if (pid1) {
+		fd = open("/dev/console", O_RDWR | O_NOCTTY);
+		if (fd >= 0) {
+			dup2(fd, 0);
+			dup2(fd, 1);
+			dup2(fd, 2);
+			if (fd > 2)
+				close(fd);
+		}
+	}
+
+	/* never leave 0-2 closed, or the next open() (e.g. the crash log) lands there */
+	for (fd = 0; fd <= 2; fd++) {
+		if (fcntl(fd, F_GETFD) < 0 && open("/dev/null", O_RDWR) != fd)
+			break;
 	}
 }

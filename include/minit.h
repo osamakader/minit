@@ -57,6 +57,7 @@ void log_boot(int boot_ms, int total, int started);
 
 /* system.c: PID 1 setup */
 void system_mount_early(void);  /* /proc, /sys, /dev, /run, ...; skips existing mounts */
+void system_setup_stdio(int pid1);  /* PID 1: fds 0-2 on /dev/console; always: 0-2 open */
 
 /* supervisor.c */
 typedef struct supervisor supervisor_t;

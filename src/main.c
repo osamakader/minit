@@ -60,6 +60,7 @@ int main(int argc, char **argv)
 	is_pid1 = (getpid() == 1);
 	if (is_pid1)
 		system_mount_early();
+	system_setup_stdio(is_pid1);
 
 	/* as PID 1, argv holds leftover kernel cmdline words, not our arguments */
 	if (!is_pid1 && (argc > 2 || (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)))) {
