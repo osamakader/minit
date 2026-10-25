@@ -76,6 +76,7 @@ int main(int argc, char **argv)
 	unsetenv(RETRY_ENV);  /* keep it out of the services' environment */
 	if (is_pid1) {
 		system_set_hostname();
+		system_seed_load();
 		system_read_cmdline(cmdline_config, sizeof(cmdline_config), &single);
 	}
 	if (single && !retry) {

@@ -69,6 +69,8 @@ int system_emergency_shell(void);  /* run /bin/sh on the console until it exits;
 /* parse /proc/cmdline: minit.config=PATH fills config, single/minit.single sets *single */
 void system_read_cmdline(char *config, size_t config_len, int *single);
 void system_set_hostname(void);  /* from /etc/hostname, if present */
+void system_seed_load(void);  /* mix the saved random seed into /dev/urandom, then refresh it */
+void system_seed_save(void);
 void system_shutdown(shutdown_action_t action);  /* PID 1 only: kill all, unmount, reboot(); no return */
 
 /* supervisor.c */

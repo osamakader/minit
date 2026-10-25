@@ -16,6 +16,9 @@
 #define MAX_MOUNTS      64
 #define KILL_GRACE_MS   2000
 #define EMERGENCY_SHELL "/bin/sh"
+#define SEED_DIR        "/var/lib/minit"
+#define SEED_FILE       SEED_DIR "/random-seed"
+#define SEED_SIZE       512
 
 struct early_mount {
 	const char *source;
@@ -140,6 +143,43 @@ static void unmount_all(void)
 	mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY, NULL);
 }
 
+/* Copy up to SEED_SIZE bytes between files; returns bytes copied or -1. */
+static ssize_t copy_bytes(const char *from, const char *to, int to_flags)
+{
+	char buf[SEED_SIZE];
+	ssize_t n = -1;
+	int in, out;
+
+	in = open(from, O_RDONLY | O_CLOEXEC);
+	if (in < 0)
+		return -1;
+	out = open(to, O_WRONLY | O_CLOEXEC | to_flags, 0600);
+	if (out >= 0) {
+		n = read(in, buf, sizeof(buf));
+		if (n > 0 && write(out, buf, (size_t)n) != n)
+			n = -1;
+		fsync(out);
+		close(out);
+	}
+	close(in);
+	return n;
+}
+
+void system_seed_save(void)
+{
+	mkdir("/var/lib", 0755);
+	mkdir(SEED_DIR, 0755);
+	copy_bytes("/dev/urandom", SEED_FILE, O_CREAT | O_TRUNC);
+}
+
+void system_seed_load(void)
+{
+	/* writing to /dev/urandom mixes the seed in without crediting entropy */
+	copy_bytes(SEED_FILE, "/dev/urandom", 0);
+	/* replace it at once, so a crash before shutdown never reuses the same seed */
+	system_seed_save();
+}
+
 void system_shutdown(shutdown_action_t action)
 {
 	static const char *const what[] = { "powering off", "rebooting", "halting" };
@@ -152,6 +192,7 @@ void system_shutdown(shutdown_action_t action)
 
 	fprintf(stderr, "minit: %s\n", what[action]);
 	kill_all();
+	system_seed_save();
 	sync();
 	unmount_all();
 	sync();
