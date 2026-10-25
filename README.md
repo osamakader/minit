@@ -4,7 +4,7 @@ Minimal PID1 replacement for embedded systems. A middle ground between BusyBox i
 
 ## Features
 
-- **JSON or simple conf** — service definitions in `.json` or `.conf`
+- **Simple conf format** — INI-style `[service name]` sections (JSON support is planned; `examples/minit.json.example` shows the intended format)
 - **Service supervision** — track and respawn processes
 - **Restart policies** — `always`, `on-failure`, `never`
 - **Auto-restart with backoff** — exponential backoff to avoid restart storms
