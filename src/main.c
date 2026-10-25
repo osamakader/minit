@@ -74,8 +74,10 @@ int main(int argc, char **argv)
 
 	retry = getenv(RETRY_ENV) != NULL;
 	unsetenv(RETRY_ENV);  /* keep it out of the services' environment */
-	if (is_pid1)
+	if (is_pid1) {
+		system_set_hostname();
 		system_read_cmdline(cmdline_config, sizeof(cmdline_config), &single);
+	}
 	if (single && !retry) {
 		fprintf(stderr, "minit: single-user mode\n");
 		if (system_emergency_shell() < 0)

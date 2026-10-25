@@ -1,6 +1,7 @@
 #include "minit.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -204,4 +205,21 @@ void system_read_cmdline(char *config, size_t config_len, int *single)
 			*single = 1;
 		}
 	}
+}
+
+void system_set_hostname(void)
+{
+	char name[HOST_NAME_MAX + 1];
+	FILE *f;
+
+	f = fopen("/etc/hostname", "r");
+	if (!f)
+		return;
+	if (fgets(name, sizeof(name), f)) {
+		char *p = name + strspn(name, " \t");
+		p[strcspn(p, " \t\r\n#")] = '\0';
+		if (*p && sethostname(p, strlen(p)) < 0)
+			fprintf(stderr, "minit: cannot set hostname: %s\n", strerror(errno));
+	}
+	fclose(f);
 }
