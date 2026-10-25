@@ -60,7 +60,7 @@ static int find_provider_idx(const supervisor_t *s, const char *name)
 
 static int deps_ready(const supervisor_t *s, int idx)
 {
-	service_t *svc = &s->config.services[idx];
+	const service_t *svc = &s->config.services[idx];
 	int i, prov;
 	for (i = 0; i < svc->ndeps; i++) {
 		prov = find_provider_idx(s, svc->depends[i]);

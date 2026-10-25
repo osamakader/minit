@@ -63,7 +63,7 @@ void log_crash(const char *name, pid_t pid, int exit_code, int signal, int resta
 	timestamp(ts, sizeof(ts));
 	snprintf(buf, sizeof(buf), "%s | %-12s | pid=%d | exit=%d | signal=%d | restarts=%d\n",
 		ts, name, (int)pid, exit_code, signal, restarts);
-	(void)write(crash_fd, buf, strlen(buf));
+	(void)!write(crash_fd, buf, strlen(buf));
 }
 
 void log_giveup(const char *name, int restarts)
@@ -87,7 +87,7 @@ void log_boot(int boot_ms, int total, int started)
 		boot_ms, total, started);
 	fd = open(boot_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd >= 0) {
-		(void)write(fd, buf, strlen(buf));
+		(void)!write(fd, buf, strlen(buf));
 		close(fd);
 	}
 }
