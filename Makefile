@@ -6,18 +6,28 @@ SRC     = src/main.c src/config.c src/deps.c src/log.c src/supervisor.c src/syst
 OBJ     = $(SRC:.c=.o)
 TARGET  = minit
 
-.PHONY: all clean install
+.PHONY: all clean install static size
 
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^
 
+# stripped static binary for initramfs/rootfs, e.g. make static CC=musl-gcc
+static: $(TARGET)-static
+
+$(TARGET)-static: $(OBJ)
+	$(CC) $(LDFLAGS) -static -s -o $@ $^
+
+size: $(TARGET)-static
+	@ls -l $(TARGET)-static | awk '{ printf "%s: %d bytes (budget 512000)\n", $$NF, $$5 }'
+	@size $(TARGET)-static
+
 %.o: %.c include/minit.h
 	$(CC) $(CFLAGS) -Iinclude -c -o $@ $<
 
 clean:
-	rm -f $(OBJ) $(TARGET)
+	rm -f $(OBJ) $(TARGET) $(TARGET)-static
 
 install: $(TARGET)
 	install -d $(DESTDIR)/usr/bin

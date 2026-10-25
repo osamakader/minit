@@ -30,6 +30,7 @@
 
 # Executables
 minit
+minit-static
 *.exe
 *.out
 *.app
