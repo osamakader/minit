@@ -25,7 +25,7 @@ struct supervisor {
 	pid_t pids[MINIT_MAX_SERVICES];
 	service_state_t states[MINIT_MAX_SERVICES];
 	int restart_count[MINIT_MAX_SERVICES];
-	time_t spawn_time[MINIT_MAX_SERVICES];
+	long long spawn_ms[MINIT_MAX_SERVICES];  /* monotonic */
 	long long restart_at[MINIT_MAX_SERVICES];  /* monotonic ms, 0 = now */
 	int wake_fd[2];  /* self-pipe: signal handlers wake the poll() loop */
 	volatile sig_atomic_t shutdown;
@@ -114,14 +114,14 @@ static int spawn(supervisor_t *s, int idx)
 
 	s->pids[idx] = pid;
 	s->states[idx] = STATE_RUNNING;
-	s->spawn_time[idx] = time(NULL);
+	s->spawn_ms[idx] = now_ms();
 	return 0;
 }
 
 static int should_restart(const supervisor_t *s, int idx, int exit_ok)
 {
 	service_t *svc = &s->config.services[idx];
-	time_t now = time(NULL);
+	long long now = now_ms();
 	int count = s->restart_count[idx];
 
 	switch (svc->restart) {
@@ -135,8 +135,8 @@ static int should_restart(const supervisor_t *s, int idx, int exit_ok)
 	}
 
 	if (svc->respawn_max > 0) {
-		time_t window_start = now - svc->respawn_window;
-		if (s->spawn_time[idx] > window_start) {
+		long long window_start = now - (long long)svc->respawn_window * 1000;
+		if (s->spawn_ms[idx] > window_start) {
 			/* exited quickly, count it */
 			if (count >= svc->respawn_max)
 				return 0;
@@ -206,7 +206,7 @@ static void handle_exit(supervisor_t *s, int idx, int status)
 {
 	service_t *svc = &s->config.services[idx];
 	int exit_code = 0, sig = 0;
-	time_t now = time(NULL);
+	long long now = now_ms();
 	long long delay_ms;
 
 	if (WIFEXITED(status))
@@ -223,7 +223,7 @@ static void handle_exit(supervisor_t *s, int idx, int status)
 		return;
 
 	/* Reset restart count if service ran for > respawn_window */
-	if (now - s->spawn_time[idx] > (time_t)svc->respawn_window)
+	if (now - s->spawn_ms[idx] > (long long)svc->respawn_window * 1000)
 		s->restart_count[idx] = 0;
 	s->restart_count[idx]++;
 	s->states[idx] = STATE_PENDING;
