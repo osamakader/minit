@@ -71,20 +71,40 @@ static int deps_ready(const supervisor_t *s, int idx)
 	return 1;
 }
 
-/* Split exec into argv. Returns argc, fills argv. Caller provides buf. */
+/*
+ * Split exec into argv like a shell would, without expansion: '...' is
+ * literal, "..." allows \" and \\, and \ escapes the next char outside quotes.
+ * Returns argc, or -1 on an unterminated quote. Caller provides buf.
+ */
 static int parse_argv(const char *exec, char *buf, size_t bufsz, char *argv[MINIT_MAX_ARGS + 1])
 {
-	char *p;
+	const char *in = exec;
+	char *out = buf, *end = buf + bufsz - 1;
+	char quote;
 	int argc = 0;
 
-	strncpy(buf, exec, bufsz - 1);
-	buf[bufsz - 1] = '\0';
-
-	for (p = buf; *p && argc < MINIT_MAX_ARGS; ) {
-		while (*p && isspace((unsigned char)*p)) *p++ = '\0';
-		if (!*p) break;
-		argv[argc++] = p;
-		while (*p && !isspace((unsigned char)*p)) p++;
+	while (argc < MINIT_MAX_ARGS) {
+		while (isspace((unsigned char)*in)) in++;
+		if (!*in || out >= end) break;
+		argv[argc++] = out;
+		quote = 0;
+		while (*in && (quote || !isspace((unsigned char)*in)) && out < end) {
+			if (quote && *in == quote) {
+				quote = 0;
+				in++;
+			} else if (!quote && (*in == '"' || *in == '\'')) {
+				quote = *in++;
+			} else if (*in == '\\' && quote != '\'' && in[1] &&
+				   (!quote || in[1] == '"' || in[1] == '\\')) {
+				in++;
+				*out++ = *in++;
+			} else {
+				*out++ = *in++;
+			}
+		}
+		if (quote)
+			return -1;
+		*out++ = '\0';
 	}
 	argv[argc] = NULL;
 	return argc;
@@ -99,7 +119,7 @@ static int spawn(supervisor_t *s, int idx)
 	int argc;
 
 	argc = parse_argv(svc->exec, exec_buf, sizeof(exec_buf), argv);
-	if (argc == 0 || !argv[0][0])
+	if (argc <= 0 || !argv[0][0])
 		return -1;
 
 	pid = fork();
