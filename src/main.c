@@ -56,7 +56,10 @@ int main(int argc, char **argv)
 	char *env_config;
 	struct sigaction sa;
 
+	clock_gettime(CLOCK_MONOTONIC, &t0);
 	is_pid1 = (getpid() == 1);
+	if (is_pid1)
+		system_mount_early();
 
 	/* as PID 1, argv holds leftover kernel cmdline words, not our arguments */
 	if (!is_pid1 && (argc > 2 || (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)))) {
@@ -77,8 +80,6 @@ int main(int argc, char **argv)
 		fprintf(stderr, "minit: config file does not exist: %s\n", config_path);
 		return fail();
 	}
-
-	clock_gettime(CLOCK_MONOTONIC, &t0);
 
 	if (config_parse(config_path, &cfg) < 0) {
 		fprintf(stderr, "minit: cannot read or parse config %s\n", config_path);

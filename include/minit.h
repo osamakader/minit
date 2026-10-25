@@ -55,6 +55,9 @@ void log_crash(const char *name, pid_t pid, int exit_code, int signal, int resta
 void log_giveup(const char *name, int restarts);
 void log_boot(int boot_ms, int total, int started);
 
+/* system.c: PID 1 setup */
+void system_mount_early(void);  /* /proc, /sys, /dev, /run, ...; skips existing mounts */
+
 /* supervisor.c */
 typedef struct supervisor supervisor_t;
 supervisor_t *supervisor_create(config_t *cfg, const int *order);
