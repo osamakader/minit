@@ -4,8 +4,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
-
-extern char **environ;
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
@@ -128,7 +127,10 @@ static int spawn(supervisor_t *s, int idx)
 
 	if (pid == 0) {
 		/* child */
-		execve(argv[0], argv, environ);
+		/* searches PATH when argv[0] has no slash (default PATH if unset) */
+		execvp(argv[0], argv);
+		fprintf(stderr, "minit: %s: cannot exec %s: %s\n",
+			svc->name, argv[0], strerror(errno));
 		_exit(127);
 	}
 
