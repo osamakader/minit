@@ -134,10 +134,11 @@ static int should_restart(const supervisor_t *s, int idx, int exit_ok)
 
 static int backoff_delay(const service_t *svc, int restart_count)
 {
-	int delay = svc->respawn_delay;
-	int mult = 1 << restart_count;
-	if (mult > BACKOFF_CAP) mult = BACKOFF_CAP;
-	return delay * mult;
+	int mult = 1;
+	/* shifting by a negative or huge count is undefined, so double instead */
+	while (restart_count-- > 0 && mult < BACKOFF_CAP)
+		mult *= 2;
+	return svc->respawn_delay * mult;
 }
 
 supervisor_t *supervisor_create(config_t *cfg, const int *order)
