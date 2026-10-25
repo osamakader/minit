@@ -219,7 +219,7 @@ static void handle_exit(supervisor_t *s, int idx, int status)
 	s->pids[idx] = 0;
 	s->states[idx] = STATE_STOPPED;
 
-	if (!should_restart(s, idx, (exit_code == 0)))
+	if (!should_restart(s, idx, WIFEXITED(status) && exit_code == 0))
 		return;
 
 	/* Reset restart count if service ran for > respawn_window */
