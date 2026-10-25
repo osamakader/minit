@@ -72,7 +72,7 @@ static int deps_ready(const supervisor_t *s, int idx)
 }
 
 /* Split exec into argv. Returns argc, fills argv. Caller provides buf. */
-static int parse_argv(const char *exec, char *buf, size_t bufsz, char *argv[MINIT_MAX_ARGS])
+static int parse_argv(const char *exec, char *buf, size_t bufsz, char *argv[MINIT_MAX_ARGS + 1])
 {
 	char *p;
 	int argc = 0;
@@ -94,7 +94,7 @@ static int spawn(supervisor_t *s, int idx)
 {
 	service_t *svc = &s->config.services[idx];
 	char exec_buf[MINIT_EXEC_LEN];
-	char *argv[MINIT_MAX_ARGS];
+	char *argv[MINIT_MAX_ARGS + 1];
 	pid_t pid;
 	int argc;
 
