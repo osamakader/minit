@@ -91,7 +91,7 @@ int main(int argc, char **argv)
 	}
 
 	if (deps_resolve(&cfg, order) < 0) {
-		fprintf(stderr, "minit: dependency cycle detected\n");
+		fprintf(stderr, "minit: invalid service dependencies\n");
 		return fail();
 	}
 
