@@ -11,6 +11,8 @@ extern char **environ;
 #include <unistd.h>
 
 #define BACKOFF_CAP 64
+#define SHUTDOWN_TICK_MS 100
+#define SHUTDOWN_TICKS   300  /* 30s total before SIGKILL */
 
 struct supervisor {
 	config_t config;
@@ -231,16 +233,22 @@ static void shutdown_all(supervisor_t *s)
 			kill(s->pids[idx], SIGTERM);
 		}
 	}
-	for (i = 0; i < 30; i++) {
+	for (i = 0; i < SHUTDOWN_TICKS; i++) {
+		struct timespec tick = { 0, SHUTDOWN_TICK_MS * 1000000L };
 		pid_t pid;
 		int any = 0;
-		while ((pid = waitpid(-1, NULL, WNOHANG)) > 0)
-			;
+		while ((pid = waitpid(-1, NULL, WNOHANG)) > 0) {
+			idx = find_by_pid(s, pid);
+			if (idx >= 0) {
+				s->pids[idx] = 0;
+				s->states[idx] = STATE_STOPPED;
+			}
+		}
 		for (idx = 0; idx < s->nservices; idx++) {
 			if (s->pids[idx] > 0) any = 1;
 		}
 		if (!any) break;
-		sleep(1);
+		nanosleep(&tick, NULL);
 	}
 	for (idx = 0; idx < s->nservices; idx++) {
 		if (s->pids[idx] > 0) {
