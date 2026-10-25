@@ -126,7 +126,11 @@ static int spawn(supervisor_t *s, int idx)
 		return -1;
 
 	if (pid == 0) {
-		/* child */
+		/* child: own session, so console job control and hangups don't reach it */
+		sigset_t none;
+		sigemptyset(&none);
+		sigprocmask(SIG_SETMASK, &none, NULL);
+		setsid();
 		/* searches PATH when argv[0] has no slash (default PATH if unset) */
 		execvp(argv[0], argv);
 		fprintf(stderr, "minit: %s: cannot exec %s: %s\n",
