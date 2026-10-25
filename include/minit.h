@@ -11,6 +11,7 @@
 #define MINIT_NAME_LEN      64
 #define MINIT_EXEC_LEN      256
 #define MINIT_PROVIDES_LEN  64
+#define CONFIG_LINE_LEN     512
 
 typedef enum {
 	RESTART_NEVER,
@@ -60,5 +61,7 @@ void supervisor_request_shutdown(supervisor_t *s);
 void supervisor_wake(supervisor_t *s);  /* async-signal-safe, e.g. from SIGCHLD */
 int supervisor_start_all(supervisor_t *s);  /* returns count started, or -1 on error */
 int supervisor_run(supervisor_t *s);  /* main loop, returns when shutdown */
+/* split exec into argv (shell-style quotes, no expansion); -1 on unterminated quote */
+int exec_split(const char *exec, char *buf, size_t bufsz, char *argv[MINIT_MAX_ARGS + 1]);
 
 #endif

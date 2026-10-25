@@ -57,29 +57,51 @@ static int parse_restart(const char *v)
 	return -1;
 }
 
-static void parse_depends(const char *v, service_t *svc)
+/* Copy v into dst. Returns -1 instead of silently truncating. */
+static int copy_value(char *dst, size_t size, const char *v)
 {
-	char buf[256];
+	if (strlen(v) >= size)
+		return -1;
+	strcpy(dst, v);
+	return 0;
+}
+
+static const char *parse_depends(const char *v, service_t *svc)
+{
+	char buf[CONFIG_LINE_LEN];
 	char *p, *tok;
-	strncpy(buf, v, sizeof(buf) - 1);
-	buf[sizeof(buf) - 1] = '\0';
+	strcpy(buf, v);  /* v comes from a line of at most CONFIG_LINE_LEN */
 	svc->ndeps = 0;
-	for (p = buf; svc->ndeps < MINIT_MAX_DEPS && (tok = strtok(p, ",")); p = NULL) {
+	for (p = buf; (tok = strtok(p, ",")); p = NULL) {
 		trim(tok);
-		if (*tok) {
-			strncpy(svc->depends[svc->ndeps], tok, MINIT_PROVIDES_LEN - 1);
-			svc->depends[svc->ndeps][MINIT_PROVIDES_LEN - 1] = '\0';
-			svc->ndeps++;
-		}
+		if (!*tok)
+			continue;
+		if (svc->ndeps >= MINIT_MAX_DEPS)
+			return "too many depends";
+		if (copy_value(svc->depends[svc->ndeps], MINIT_PROVIDES_LEN, tok) < 0)
+			return "depends name too long";
+		svc->ndeps++;
 	}
+	return NULL;
+}
+
+static int service_exists(const config_t *cfg, const char *name)
+{
+	int i;
+	for (i = 0; i < cfg->nservices; i++) {
+		if (strcmp(cfg->services[i].name, name) == 0)
+			return 1;
+	}
+	return 0;
 }
 
 int config_parse(const char *path, config_t *cfg)
 {
 	FILE *f;
-	char line[512];
+	char line[CONFIG_LINE_LEN];
 	service_t *cur = NULL;
-	int r, lineno = 0, errors = 0;
+	const char *err;
+	int i, r, lineno = 0, errors = 0;
 	int bad_section = 0;  /* inside a [section] that was already reported */
 
 	memset(cfg, 0, sizeof(*cfg));
@@ -92,6 +114,14 @@ int config_parse(const char *path, config_t *cfg)
 		char *eq, *key, *val;
 
 		lineno++;
+		if (!strchr(line, '\n') && !feof(f)) {
+			int c;
+			parse_error(path, lineno, "line too long (max %d)", CONFIG_LINE_LEN - 2);
+			errors++;
+			while ((c = fgetc(f)) != EOF && c != '\n')
+				;
+			continue;
+		}
 		/* strip newline */
 		line[strcspn(line, "\n")] = '\0';
 		trim(line);
@@ -117,13 +147,25 @@ int config_parse(const char *path, config_t *cfg)
 				errors++;
 				continue;
 			}
-			if (cfg->nservices >= MINIT_MAX_SERVICES)
+			if (cfg->nservices >= MINIT_MAX_SERVICES) {
+				parse_error(path, lineno, "too many services (max %d)", MINIT_MAX_SERVICES);
+				errors++;
 				continue;
+			}
+			if (strlen(key) >= MINIT_NAME_LEN) {
+				parse_error(path, lineno, "service name too long");
+				errors++;
+				continue;
+			}
+			if (service_exists(cfg, key)) {
+				parse_error(path, lineno, "duplicate service '%s'", key);
+				errors++;
+				continue;
+			}
 			bad_section = 0;
 			cur = &cfg->services[cfg->nservices++];
 			service_defaults(cur);
-			strncpy(cur->name, key, MINIT_NAME_LEN - 1);
-			cur->name[MINIT_NAME_LEN - 1] = '\0';
+			strcpy(cur->name, key);
 			continue;
 		}
 
@@ -148,8 +190,15 @@ int config_parse(const char *path, config_t *cfg)
 		trim(val);
 
 		if (strcmp(key, "exec") == 0) {
-			strncpy(cur->exec, val, MINIT_EXEC_LEN - 1);
-			cur->exec[MINIT_EXEC_LEN - 1] = '\0';
+			char buf[MINIT_EXEC_LEN];
+			char *argv[MINIT_MAX_ARGS + 1];
+			if (copy_value(cur->exec, MINIT_EXEC_LEN, val) < 0) {
+				parse_error(path, lineno, "exec too long (max %d)", MINIT_EXEC_LEN - 1);
+				errors++;
+			} else if (exec_split(val, buf, sizeof(buf), argv) <= 0) {
+				parse_error(path, lineno, "exec is empty or has an unterminated quote");
+				errors++;
+			}
 		} else if (strcmp(key, "restart") == 0) {
 			r = parse_restart(val);
 			if (r < 0) {
@@ -159,10 +208,16 @@ int config_parse(const char *path, config_t *cfg)
 				cur->restart = r;
 			}
 		} else if (strcmp(key, "depends") == 0) {
-			parse_depends(val, cur);
+			err = parse_depends(val, cur);
+			if (err) {
+				parse_error(path, lineno, "%s", err);
+				errors++;
+			}
 		} else if (strcmp(key, "provides") == 0) {
-			strncpy(cur->provides, val, MINIT_PROVIDES_LEN - 1);
-			cur->provides[MINIT_PROVIDES_LEN - 1] = '\0';
+			if (copy_value(cur->provides, MINIT_PROVIDES_LEN, val) < 0) {
+				parse_error(path, lineno, "provides too long");
+				errors++;
+			}
 		} else if (strcmp(key, "respawn_delay") == 0) {
 			if (parse_int(val, 1, 60, &cur->respawn_delay) < 0) {
 				parse_error(path, lineno, "respawn_delay must be 1..60");
@@ -185,5 +240,13 @@ int config_parse(const char *path, config_t *cfg)
 	}
 
 	fclose(f);
+
+	for (i = 0; i < cfg->nservices; i++) {
+		if (!cfg->services[i].exec[0]) {
+			fprintf(stderr, "minit: %s: service '%s' has no exec\n",
+				path, cfg->services[i].name);
+			errors++;
+		}
+	}
 	return errors ? -1 : 0;
 }

@@ -75,7 +75,7 @@ static int deps_ready(const supervisor_t *s, int idx)
  * literal, "..." allows \" and \\, and \ escapes the next char outside quotes.
  * Returns argc, or -1 on an unterminated quote. Caller provides buf.
  */
-static int parse_argv(const char *exec, char *buf, size_t bufsz, char *argv[MINIT_MAX_ARGS + 1])
+int exec_split(const char *exec, char *buf, size_t bufsz, char *argv[MINIT_MAX_ARGS + 1])
 {
 	const char *in = exec;
 	char *out = buf, *end = buf + bufsz - 1;
@@ -117,7 +117,7 @@ static int spawn(supervisor_t *s, int idx)
 	pid_t pid;
 	int argc;
 
-	argc = parse_argv(svc->exec, exec_buf, sizeof(exec_buf), argv);
+	argc = exec_split(svc->exec, exec_buf, sizeof(exec_buf), argv);
 	if (argc <= 0 || !argv[0][0])
 		return -1;
 
