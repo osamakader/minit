@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <sys/ioctl.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -13,6 +14,7 @@
 
 #define MAX_MOUNTS      64
 #define KILL_GRACE_MS   2000
+#define EMERGENCY_SHELL "/bin/sh"
 
 struct early_mount {
 	const char *source;
@@ -154,4 +156,28 @@ void system_shutdown(shutdown_action_t action)
 	sync();
 	reboot(cmd);
 	system_hang();  /* reboot() failed */
+}
+
+int system_emergency_shell(void)
+{
+	pid_t pid, w;
+
+	if (access(EMERGENCY_SHELL, X_OK) < 0)
+		return -1;
+	fprintf(stderr, "minit: starting emergency shell, exit it to retry boot\n");
+	pid = fork();
+	if (pid < 0)
+		return -1;
+	if (pid == 0) {
+		setsid();
+		ioctl(0, TIOCSCTTY, 1);  /* console as controlling tty, for Ctrl-C and job control */
+		execl(EMERGENCY_SHELL, EMERGENCY_SHELL, (char *)NULL);
+		_exit(127);
+	}
+	/* reap anything the shell leaves behind while waiting for it */
+	while ((w = waitpid(-1, NULL, 0)) != pid) {
+		if (w < 0 && errno != EINTR)
+			break;
+	}
+	return 0;
 }

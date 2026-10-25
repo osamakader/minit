@@ -11,12 +11,20 @@
 
 static supervisor_t *g_supervisor;
 static int is_pid1;
+static char **g_argv;
 static volatile sig_atomic_t g_action = SHUTDOWN_POWEROFF;
 
 static int fail(void)
 {
 	if (is_pid1) {
-		fprintf(stderr, "minit: fatal error, halting\n");
+		fprintf(stderr, "minit: fatal error during boot\n");
+		if (system_emergency_shell() == 0) {
+			sleep(1);  /* don't spin if the shell exits at once, e.g. no console */
+			/* argv[0] first: exec via /proc/self/exe renames the process to "exe" */
+			execv(g_argv[0], g_argv);
+			execv("/proc/self/exe", g_argv);
+		}
+		fprintf(stderr, "minit: no emergency shell, halting\n");
 		system_hang();
 	}
 	return 1;
@@ -54,6 +62,7 @@ int main(int argc, char **argv)
 	struct sigaction sa;
 
 	clock_gettime(CLOCK_MONOTONIC, &t0);
+	g_argv = argv;
 	is_pid1 = (getpid() == 1);
 	if (is_pid1)
 		system_mount_early();
