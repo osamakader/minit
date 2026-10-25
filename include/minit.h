@@ -66,6 +66,8 @@ void system_mount_early(void);  /* /proc, /sys, /dev, /run, ...; skips existing 
 void system_setup_stdio(int pid1);  /* PID 1: fds 0-2 on /dev/console; always: 0-2 open */
 void system_hang(void);  /* never returns; reaps orphans */
 int system_emergency_shell(void);  /* run /bin/sh on the console until it exits; -1 if none */
+/* parse /proc/cmdline: minit.config=PATH fills config, single/minit.single sets *single */
+void system_read_cmdline(char *config, size_t config_len, int *single);
 void system_shutdown(shutdown_action_t action);  /* PID 1 only: kill all, unmount, reboot(); no return */
 
 /* supervisor.c */

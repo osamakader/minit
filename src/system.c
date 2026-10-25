@@ -164,7 +164,7 @@ int system_emergency_shell(void)
 
 	if (access(EMERGENCY_SHELL, X_OK) < 0)
 		return -1;
-	fprintf(stderr, "minit: starting emergency shell, exit it to retry boot\n");
+	fprintf(stderr, "minit: emergency shell, exit it to continue booting\n");
 	pid = fork();
 	if (pid < 0)
 		return -1;
@@ -180,4 +180,28 @@ int system_emergency_shell(void)
 			break;
 	}
 	return 0;
+}
+
+void system_read_cmdline(char *config, size_t config_len, int *single)
+{
+	char buf[1024];
+	char *tok, *save;
+	size_t n;
+	FILE *f;
+
+	f = fopen("/proc/cmdline", "r");
+	if (!f)
+		return;
+	n = fread(buf, 1, sizeof(buf) - 1, f);
+	fclose(f);
+	buf[n] = '\0';
+
+	/* quoted values with spaces are not supported */
+	for (tok = strtok_r(buf, " \t\n", &save); tok; tok = strtok_r(NULL, " \t\n", &save)) {
+		if (strncmp(tok, "minit.config=", 13) == 0) {
+			snprintf(config, config_len, "%s", tok + 13);
+		} else if (strcmp(tok, "single") == 0 || strcmp(tok, "minit.single") == 0) {
+			*single = 1;
+		}
+	}
 }

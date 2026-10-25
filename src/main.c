@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #define DEFAULT_CONFIG "/etc/minit.conf"
+#define RETRY_ENV      "MINIT_RETRY"  /* set across the re-exec after a fatal error */
 
 static supervisor_t *g_supervisor;
 static int is_pid1;
@@ -20,6 +21,7 @@ static int fail(void)
 		fprintf(stderr, "minit: fatal error during boot\n");
 		if (system_emergency_shell() == 0) {
 			sleep(1);  /* don't spin if the shell exits at once, e.g. no console */
+			setenv(RETRY_ENV, "1", 1);
 			/* argv[0] first: exec via /proc/self/exe renames the process to "exe" */
 			execv(g_argv[0], g_argv);
 			execv("/proc/self/exe", g_argv);
@@ -59,6 +61,8 @@ int main(int argc, char **argv)
 	int started = 0;
 	const char *config_path;
 	char *env_config;
+	char cmdline_config[MINIT_EXEC_LEN] = "";
+	int single = 0, retry;
 	struct sigaction sa;
 
 	clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -67,6 +71,16 @@ int main(int argc, char **argv)
 	if (is_pid1)
 		system_mount_early();
 	system_setup_stdio(is_pid1);
+
+	retry = getenv(RETRY_ENV) != NULL;
+	unsetenv(RETRY_ENV);  /* keep it out of the services' environment */
+	if (is_pid1)
+		system_read_cmdline(cmdline_config, sizeof(cmdline_config), &single);
+	if (single && !retry) {
+		fprintf(stderr, "minit: single-user mode\n");
+		if (system_emergency_shell() < 0)
+			fprintf(stderr, "minit: no emergency shell, continuing boot\n");
+	}
 
 	/* as PID 1, argv holds leftover kernel cmdline words, not our arguments */
 	if (!is_pid1 && (argc > 2 || (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)))) {
@@ -80,6 +94,8 @@ int main(int argc, char **argv)
 	env_config = getenv("MINIT_CONFIG");
 	if (!is_pid1 && argc == 2)
 		config_path = argv[1];
+	else if (cmdline_config[0])
+		config_path = cmdline_config;
 	else
 		config_path = (env_config && env_config[0]) ? env_config : DEFAULT_CONFIG;
 
