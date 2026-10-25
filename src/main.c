@@ -121,11 +121,6 @@ int main(int argc, char **argv)
 	sigaction(SIGCHLD, &sa, NULL);
 
 	started = supervisor_start_all(g_supervisor);
-	if (started < 0) {
-		fprintf(stderr, "minit: failed to start services\n");
-		supervisor_destroy(g_supervisor);
-		return fail();
-	}
 
 	clock_gettime(CLOCK_MONOTONIC, &t1);
 	boot_ms = (int)((t1.tv_sec - t0.tv_sec) * 1000 +

@@ -208,8 +208,11 @@ int supervisor_start_all(supervisor_t *s)
 		idx = s->order[i];
 		if (!deps_ready(s, idx))
 			continue;
-		if (spawn(s, idx) < 0)
-			return -1;
+		if (spawn(s, idx) < 0) {
+			/* e.g. fork() failed: the main loop retries it */
+			s->restart_at[idx] = now_ms() + SPAWN_RETRY_MS;
+			continue;
+		}
 		started++;
 	}
 	return started;

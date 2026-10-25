@@ -73,7 +73,7 @@ supervisor_t *supervisor_create(config_t *cfg, const int *order);
 void supervisor_destroy(supervisor_t *s);
 void supervisor_request_shutdown(supervisor_t *s);
 void supervisor_wake(supervisor_t *s);  /* async-signal-safe, e.g. from SIGCHLD */
-int supervisor_start_all(supervisor_t *s);  /* returns count started, or -1 on error */
+int supervisor_start_all(supervisor_t *s);  /* returns count started; failures are retried later */
 int supervisor_run(supervisor_t *s);  /* main loop, returns when shutdown */
 /* split exec into argv (shell-style quotes, no expansion); -1 on unterminated quote */
 int exec_split(const char *exec, char *buf, size_t bufsz, char *argv[MINIT_MAX_ARGS + 1]);
