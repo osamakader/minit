@@ -26,6 +26,7 @@ int main(int argc, char **argv)
 	int started = 0;
 	const char *config_path;
 	char *env_config;
+	struct sigaction sa;
 
 	if (argc > 2 || (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0))) {
 		fprintf(stderr, "Usage: %s [config file]\n", argv[0]);
@@ -74,8 +75,12 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	signal(SIGTERM, on_signal);
-	signal(SIGINT, on_signal);
+	/* no SA_RESTART: a blocking waitpid() must return EINTR on shutdown */
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_signal;
+	sigemptyset(&sa.sa_mask);
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGINT, &sa, NULL);
 	signal(SIGCHLD, SIG_DFL);
 
 	started = supervisor_start_all(g_supervisor);
