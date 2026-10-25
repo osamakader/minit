@@ -140,12 +140,8 @@ static int spawn(supervisor_t *s, int idx)
 	return 0;
 }
 
-static int should_restart(const supervisor_t *s, int idx, int exit_ok)
+static int restart_wanted(const service_t *svc, int exit_ok)
 {
-	service_t *svc = &s->config.services[idx];
-	long long now = now_ms();
-	int count = s->restart_count[idx];
-
 	switch (svc->restart) {
 	case RESTART_NEVER:
 		return 0;
@@ -154,15 +150,6 @@ static int should_restart(const supervisor_t *s, int idx, int exit_ok)
 		break;
 	case RESTART_ALWAYS:
 		break;
-	}
-
-	if (svc->respawn_max > 0) {
-		long long window_start = now - (long long)svc->respawn_window * 1000;
-		if (s->spawn_ms[idx] > window_start) {
-			/* exited quickly, count it */
-			if (count >= svc->respawn_max)
-				return 0;
-		}
 	}
 	return 1;
 }
@@ -241,12 +228,18 @@ static void handle_exit(supervisor_t *s, int idx, int status)
 	s->pids[idx] = 0;
 	s->states[idx] = STATE_STOPPED;
 
-	if (!should_restart(s, idx, WIFEXITED(status) && exit_code == 0))
+	if (!restart_wanted(svc, WIFEXITED(status) && exit_code == 0))
 		return;
 
 	/* Reset restart count if service ran for > respawn_window */
 	if (now - s->spawn_ms[idx] > (long long)svc->respawn_window * 1000)
 		s->restart_count[idx] = 0;
+
+	if (svc->respawn_max > 0 && s->restart_count[idx] >= svc->respawn_max) {
+		s->states[idx] = STATE_FAILED;
+		log_giveup(svc->name, s->restart_count[idx]);
+		return;
+	}
 	s->restart_count[idx]++;
 	s->states[idx] = STATE_PENDING;
 

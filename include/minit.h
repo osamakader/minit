@@ -22,7 +22,8 @@ typedef enum {
 typedef enum {
 	STATE_PENDING,
 	STATE_RUNNING,
-	STATE_STOPPED
+	STATE_STOPPED,
+	STATE_FAILED   /* gave up after respawn_max quick restarts */
 } service_state_t;
 
 typedef struct {
@@ -51,6 +52,7 @@ int deps_resolve(config_t *cfg, int order[MINIT_MAX_SERVICES]);
 /* log.c */
 int log_init(const char *dir);  /* NULL = use default, try /var/log/minit then /tmp/minit */
 void log_crash(const char *name, pid_t pid, int exit_code, int signal, int restarts);
+void log_giveup(const char *name, int restarts);
 void log_boot(int boot_ms, int total, int started);
 
 /* supervisor.c */

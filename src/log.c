@@ -66,6 +66,19 @@ void log_crash(const char *name, pid_t pid, int exit_code, int signal, int resta
 	(void)write(crash_fd, buf, strlen(buf));
 }
 
+void log_giveup(const char *name, int restarts)
+{
+	char buf[256];
+	char ts[64];
+	timestamp(ts, sizeof(ts));
+	snprintf(buf, sizeof(buf), "%s | %-12s | gave up after %d restarts\n",
+		ts, name, restarts);
+	(void)!write(STDERR_FILENO, "minit: ", 7);
+	(void)!write(STDERR_FILENO, buf, strlen(buf));
+	if (crash_fd >= 0)
+		(void)!write(crash_fd, buf, strlen(buf));
+}
+
 void log_boot(int boot_ms, int total, int started)
 {
 	int fd;
