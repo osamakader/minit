@@ -56,8 +56,16 @@ void log_giveup(const char *name, int restarts);
 void log_boot(int boot_ms, int total, int started);
 
 /* system.c: PID 1 setup */
+typedef enum {
+	SHUTDOWN_POWEROFF,
+	SHUTDOWN_REBOOT,
+	SHUTDOWN_HALT
+} shutdown_action_t;
+
 void system_mount_early(void);  /* /proc, /sys, /dev, /run, ...; skips existing mounts */
 void system_setup_stdio(int pid1);  /* PID 1: fds 0-2 on /dev/console; always: 0-2 open */
+void system_hang(void);  /* never returns; reaps orphans */
+void system_shutdown(shutdown_action_t action);  /* PID 1 only: kill all, unmount, reboot(); no return */
 
 /* supervisor.c */
 typedef struct supervisor supervisor_t;

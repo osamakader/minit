@@ -4,7 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/reboot.h>
-#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -12,28 +11,26 @@
 
 static supervisor_t *g_supervisor;
 static int is_pid1;
-
-/* PID 1 must never exit or the kernel panics: stay alive and keep reaping orphans. */
-static void hang(void)
-{
-	for (;;) {
-		if (waitpid(-1, NULL, 0) < 0)
-			sleep(1);
-	}
-}
+static volatile sig_atomic_t g_action = SHUTDOWN_POWEROFF;
 
 static int fail(void)
 {
 	if (is_pid1) {
 		fprintf(stderr, "minit: fatal error, halting\n");
-		hang();
+		system_hang();
 	}
 	return 1;
 }
 
+/* BusyBox init convention, so its reboot/halt/poweroff applets work as PID 1 */
 static void on_signal(int sig)
 {
-	(void)sig;
+	if (sig == SIGUSR1)
+		g_action = SHUTDOWN_HALT;
+	else if (sig == SIGUSR2)
+		g_action = SHUTDOWN_POWEROFF;
+	else
+		g_action = SHUTDOWN_REBOOT;  /* SIGTERM, SIGINT (Ctrl-Alt-Del) */
 	if (g_supervisor)
 		supervisor_request_shutdown(g_supervisor);
 }
@@ -114,6 +111,11 @@ int main(int argc, char **argv)
 	sigemptyset(&sa.sa_mask);
 	sigaction(SIGTERM, &sa, NULL);
 	sigaction(SIGINT, &sa, NULL);
+	if (is_pid1) {
+		sigaction(SIGUSR1, &sa, NULL);
+		sigaction(SIGUSR2, &sa, NULL);
+		reboot(RB_DISABLE_CAD);  /* Ctrl-Alt-Del sends SIGINT instead of rebooting */
+	}
 	sa.sa_handler = on_child;
 	sa.sa_flags = SA_NOCLDSTOP | SA_RESTART;
 	sigaction(SIGCHLD, &sa, NULL);
@@ -134,10 +136,7 @@ int main(int argc, char **argv)
 	supervisor_destroy(g_supervisor);
 	g_supervisor = NULL;
 
-	if (is_pid1) {
-		sync();
-		reboot(RB_POWER_OFF);
-		hang();
-	}
+	if (is_pid1)
+		system_shutdown(g_action);
 	return 0;
 }

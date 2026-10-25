@@ -1,11 +1,18 @@
 #include "minit.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <sys/reboot.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
+
+#define MAX_MOUNTS      64
+#define KILL_GRACE_MS   2000
 
 struct early_mount {
 	const char *source;
@@ -76,4 +83,75 @@ void system_setup_stdio(int pid1)
 		if (fcntl(fd, F_GETFD) < 0 && open("/dev/null", O_RDWR) != fd)
 			break;
 	}
+}
+
+/* PID 1 must never exit or the kernel panics: stay alive and keep reaping orphans. */
+void system_hang(void)
+{
+	for (;;) {
+		if (waitpid(-1, NULL, 0) < 0)
+			sleep(1);
+	}
+}
+
+/* SIGTERM, then SIGKILL, every process except us; reap them as they go. */
+static void kill_all(void)
+{
+	struct timespec tick = { 0, 100 * 1000000L };
+	int i;
+
+	kill(-1, SIGTERM);
+	for (i = 0; i < KILL_GRACE_MS / 100; i++) {
+		errno = 0;
+		while (waitpid(-1, NULL, WNOHANG) > 0)
+			;
+		if (errno == ECHILD)
+			break;  /* nothing left */
+		nanosleep(&tick, NULL);
+	}
+	kill(-1, SIGKILL);
+	while (waitpid(-1, NULL, 0) > 0)
+		;
+}
+
+/* Unmount in reverse mount order; whatever is busy is at least made read-only. */
+static void unmount_all(void)
+{
+	static char targets[MAX_MOUNTS][256];
+	char line[512];
+	FILE *f;
+	int n = 0;
+
+	f = fopen("/proc/mounts", "r");
+	if (f) {
+		while (n < MAX_MOUNTS && fgets(line, sizeof(line), f)) {
+			if (sscanf(line, "%*s %255s", targets[n]) == 1 && strcmp(targets[n], "/") != 0)
+				n++;
+		}
+		fclose(f);
+	}
+	while (n-- > 0) {
+		if (umount(targets[n]) < 0)
+			mount(NULL, targets[n], NULL, MS_REMOUNT | MS_RDONLY, NULL);
+	}
+	mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY, NULL);
+}
+
+void system_shutdown(shutdown_action_t action)
+{
+	static const char *const what[] = { "powering off", "rebooting", "halting" };
+	int cmd = action == SHUTDOWN_REBOOT ? RB_AUTOBOOT :
+		  action == SHUTDOWN_HALT ? RB_HALT_SYSTEM : RB_POWER_OFF;
+
+	/* kill(-1) outside PID 1 would hit every process of this user */
+	if (getpid() != 1)
+		return;
+
+	fprintf(stderr, "minit: %s\n", what[action]);
+	kill_all();
+	sync();
+	unmount_all();
+	sync();
+	reboot(cmd);
+	system_hang();  /* reboot() failed */
 }
