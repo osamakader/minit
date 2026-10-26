@@ -16,7 +16,7 @@
 #define SHUTDOWN_TICKS   300  /* 30s total before SIGKILL */
 #define RESTART_MAX_MS   60000
 #define SPAWN_RETRY_MS   1000
-#define MAX_POLL_FDS     (1 + MINIT_MAX_SERVICES)
+#define MAX_POLL_FDS     (1 + 2 * MINIT_MAX_SERVICES)  /* wake, ready_fd, output */
 #define READY_FILE_POLL_MS 100
 
 struct supervisor {
@@ -135,7 +135,7 @@ static int spawn(supervisor_t *s, int idx)
 	char exec_buf[MINIT_EXEC_LEN];
 	char *argv[MINIT_MAX_ARGS + 1];
 	pid_t pid;
-	int argc, err, errpipe[2], notify[2] = { -1, -1 };
+	int argc, err, errpipe[2], notify[2] = { -1, -1 }, out_fd;
 	ssize_t n;
 
 	argc = exec_split(svc->exec, exec_buf, sizeof(exec_buf), argv);
@@ -147,6 +147,8 @@ static int spawn(supervisor_t *s, int idx)
 		return -1;
 	fcntl(errpipe[0], F_SETFD, FD_CLOEXEC);
 	fcntl(errpipe[1], F_SETFD, FD_CLOEXEC);
+
+	out_fd = output_prepare(idx, svc);
 
 	if (svc->ready_file[0])
 		unlink(svc->ready_file);  /* a file left by the previous run must not count */
@@ -179,6 +181,12 @@ static int spawn(supervisor_t *s, int idx)
 		sigemptyset(&none);
 		sigprocmask(SIG_SETMASK, &none, NULL);
 		setsid();
+		if (svc->log == LOG_NULL)
+			out_fd = open("/dev/null", O_WRONLY);
+		if (out_fd >= 0) {
+			dup2(out_fd, 1);
+			dup2(out_fd, 2);
+		}
 		if (svc->ready_fd) {
 			/* move errpipe out of the way before dup2() replaces that fd */
 			if (errpipe[1] == svc->ready_fd)
@@ -438,6 +446,15 @@ static void drain_wake(supervisor_t *s)
 		;
 }
 
+static void drain_outputs(supervisor_t *s)
+{
+	int i;
+	for (i = 0; i < s->nservices; i++) {
+		if (output_poll_fd(i) >= 0)
+			output_handle(i, &s->config.services[i]);
+	}
+}
+
 static void shutdown_all(supervisor_t *s)
 {
 	int i, idx;
@@ -461,6 +478,7 @@ static void shutdown_all(supervisor_t *s)
 		for (idx = 0; idx < s->nservices; idx++) {
 			if (s->pids[idx] > 0) any = 1;
 		}
+		drain_outputs(s);  /* keep what services print while stopping */
 		if (!any) break;
 		nanosleep(&tick, NULL);
 	}
@@ -475,7 +493,8 @@ static void shutdown_all(supervisor_t *s)
 int supervisor_run(supervisor_t *s)
 {
 	struct pollfd pfd[MAX_POLL_FDS];
-	int owner[MAX_POLL_FDS];  /* service index for each pfd, -1 = wake pipe */
+	/* per pfd: -1 = wake pipe, i = ready_fd of service i, MAX + i = output of service i */
+	int owner[MAX_POLL_FDS];
 	int timeout, nfds, i;
 
 	while (!s->shutdown) {
@@ -500,6 +519,13 @@ int supervisor_run(supervisor_t *s)
 			pfd[nfds].events = POLLIN;
 			owner[nfds++] = i;
 		}
+		for (i = 0; i < s->nservices; i++) {
+			if (output_poll_fd(i) < 0)
+				continue;
+			pfd[nfds].fd = output_poll_fd(i);
+			pfd[nfds].events = POLLIN;
+			owner[nfds++] = MINIT_MAX_SERVICES + i;
+		}
 
 		/* a signal arriving after reap/start writes to the pipe, so poll() still wakes */
 		if (poll(pfd, (nfds_t)nfds, timeout) <= 0)
@@ -509,6 +535,9 @@ int supervisor_run(supervisor_t *s)
 				continue;
 			if (owner[i] < 0)
 				drain_wake(s);
+			else if (owner[i] >= MINIT_MAX_SERVICES)
+				output_handle(owner[i] - MINIT_MAX_SERVICES,
+					      &s->config.services[owner[i] - MINIT_MAX_SERVICES]);
 			else
 				handle_notify(s, owner[i]);
 		}

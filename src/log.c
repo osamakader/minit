@@ -15,6 +15,7 @@
 #define BOOT_FILE_ALT "/tmp/minit.boot"
 
 static int crash_fd = -1;
+static const char *dir_used = LOG_DIR;
 
 static void mkdir_p(const char *path)
 {
@@ -39,9 +40,15 @@ int log_init(const char *dir)
 	crash_fd = open(CRASH_LOG, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
 	if (crash_fd < 0) {
 		mkdir_p(LOG_DIR_ALT);
+		dir_used = LOG_DIR_ALT;
 		crash_fd = open(CRASH_LOG_ALT, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
 	}
 	return (crash_fd >= 0) ? 0 : -1;
+}
+
+const char *log_dir(void)
+{
+	return dir_used;
 }
 
 static void timestamp(char *buf, size_t len)

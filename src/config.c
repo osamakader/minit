@@ -13,6 +13,8 @@ static void service_defaults(service_t *svc)
 	svc->respawn_delay = 1;
 	svc->respawn_max = 0;
 	svc->respawn_window = 60;
+	svc->log = LOG_CONSOLE;
+	svc->log_size_kb = 256;
 }
 
 static void trim(char *s)
@@ -243,6 +245,24 @@ int config_parse(const char *path, config_t *cfg)
 		} else if (strcmp(key, "ready_file") == 0) {
 			if (val[0] != '/' || copy_value(cur->ready_file, MINIT_EXEC_LEN, val) < 0) {
 				parse_error(path, lineno, "ready_file must be an absolute path");
+				errors++;
+			}
+		} else if (strcmp(key, "log") == 0) {
+			if (strcmp(val, "console") == 0) {
+				cur->log = LOG_CONSOLE;
+			} else if (strcmp(val, "null") == 0) {
+				cur->log = LOG_NULL;
+			} else if (strcmp(val, "file") == 0) {
+				cur->log = LOG_FILE;
+			} else if (strcmp(val, "kmsg") == 0) {
+				cur->log = LOG_KMSG;
+			} else {
+				parse_error(path, lineno, "log must be console, null, file or kmsg");
+				errors++;
+			}
+		} else if (strcmp(key, "log_size") == 0) {
+			if (parse_int(val, 4, 65536, &cur->log_size_kb) < 0) {
+				parse_error(path, lineno, "log_size must be 4..65536 (KB)");
 				errors++;
 			}
 		} else if (strcmp(key, "depends") == 0) {

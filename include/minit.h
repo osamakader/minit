@@ -21,6 +21,13 @@ typedef enum {
 } restart_policy_t;
 
 typedef enum {
+	LOG_CONSOLE,  /* inherit minit's stdout/stderr */
+	LOG_NULL,
+	LOG_FILE,     /* <log dir>/<name>.log, rotated to .log.1 at log_size_kb */
+	LOG_KMSG      /* one kernel log record per line */
+} log_mode_t;
+
+typedef enum {
 	STATE_PENDING,   /* waiting for dependencies or a restart delay */
 	STATE_STARTING,  /* spawned, not ready yet */
 	STATE_RUNNING,   /* ready: dependents may start */
@@ -36,6 +43,8 @@ typedef struct {
 	int oneshot;         /* type = oneshot: ready once it exits 0 */
 	int ready_fd;        /* >= 3: ready once it writes a newline to this fd; 0 = at spawn */
 	char ready_file[MINIT_EXEC_LEN];  /* ready once this path exists; removed at spawn */
+	log_mode_t log;      /* where stdout/stderr go */
+	int log_size_kb;     /* log = file: rotate at this size */
 	/* the service name is always provided too, without being listed here */
 	char provides[MINIT_MAX_PROVIDES][MINIT_PROVIDES_LEN];
 	int nprovides;
@@ -64,6 +73,12 @@ int log_init(const char *dir);  /* NULL = use default, try /var/log/minit then /
 void log_crash(const char *name, pid_t pid, int exit_code, int signal, int restarts);
 void log_giveup(const char *name, int restarts);
 void log_boot(int boot_ms, int total, int ready);
+const char *log_dir(void);  /* directory chosen by log_init() */
+
+/* output.c: capture service stdout/stderr (log = file | kmsg) */
+int output_prepare(int idx, const service_t *svc);  /* fd for the child's 1/2, or -1 */
+int output_poll_fd(int idx);  /* fd to poll for output, or -1 */
+void output_handle(int idx, const service_t *svc);  /* read what is there and store it */
 
 /* system.c: PID 1 setup */
 typedef enum {
