@@ -104,15 +104,25 @@ static int spawn(supervisor_t *s, int idx)
 	char exec_buf[MINIT_EXEC_LEN];
 	char *argv[MINIT_MAX_ARGS + 1];
 	pid_t pid;
-	int argc;
+	int argc, err, errpipe[2];
+	ssize_t n;
 
 	argc = exec_split(svc->exec, exec_buf, sizeof(exec_buf), argv);
 	if (argc <= 0 || !argv[0][0])
 		return -1;
 
-	pid = fork();
-	if (pid < 0)
+	/* close-on-exec pipe: EOF means exec worked, an int means it failed with that errno */
+	if (pipe(errpipe) < 0)
 		return -1;
+	fcntl(errpipe[0], F_SETFD, FD_CLOEXEC);
+	fcntl(errpipe[1], F_SETFD, FD_CLOEXEC);
+
+	pid = fork();
+	if (pid < 0) {
+		close(errpipe[0]);
+		close(errpipe[1]);
+		return -1;
+	}
 
 	if (pid == 0) {
 		/* child: own session, so console job control and hangups don't reach it */
@@ -122,10 +132,20 @@ static int spawn(supervisor_t *s, int idx)
 		setsid();
 		/* searches PATH when argv[0] has no slash (default PATH if unset) */
 		execvp(argv[0], argv);
-		fprintf(stderr, "minit: %s: cannot exec %s: %s\n",
-			svc->name, argv[0], strerror(errno));
+		err = errno;
+		(void)!write(errpipe[1], &err, sizeof(err));
 		_exit(127);
 	}
+
+	close(errpipe[1]);
+	do {
+		n = read(errpipe[0], &err, sizeof(err));
+	} while (n < 0 && errno == EINTR);
+	close(errpipe[0]);
+	/* still record the pid: the exit is reaped and restarted with backoff as usual */
+	if (n == sizeof(err))
+		fprintf(stderr, "minit: %s: cannot exec %s: %s\n",
+			svc->name, argv[0], strerror(err));
 
 	s->pids[idx] = pid;
 	s->states[idx] = STATE_RUNNING;
