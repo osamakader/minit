@@ -86,6 +86,19 @@ static const char *parse_names(const char *v, char list[][MINIT_PROVIDES_LEN], i
 	return NULL;
 }
 
+/* Names become log file names, so keep them to [A-Za-z0-9._-] and not "." or "..". */
+static int valid_name(const char *name)
+{
+	const char *p;
+	if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
+		return 0;
+	for (p = name; *p; p++) {
+		if (!isalnum((unsigned char)*p) && *p != '.' && *p != '_' && *p != '-')
+			return 0;
+	}
+	return 1;
+}
+
 static int service_exists(const config_t *cfg, const char *name)
 {
 	int i;
@@ -155,6 +168,11 @@ int config_parse(const char *path, config_t *cfg)
 			}
 			if (strlen(key) >= MINIT_NAME_LEN) {
 				parse_error(path, lineno, "service name too long");
+				errors++;
+				continue;
+			}
+			if (!valid_name(key)) {
+				parse_error(path, lineno, "service name may only use A-Z a-z 0-9 . _ -");
 				errors++;
 				continue;
 			}
