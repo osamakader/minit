@@ -63,7 +63,7 @@ int deps_find_provider(const config_t *cfg, const char *name);  /* service index
 int log_init(const char *dir);  /* NULL = use default, try /var/log/minit then /tmp/minit */
 void log_crash(const char *name, pid_t pid, int exit_code, int signal, int restarts);
 void log_giveup(const char *name, int restarts);
-void log_boot(int boot_ms, int total, int started);
+void log_boot(int boot_ms, int total, int ready);
 
 /* system.c: PID 1 setup */
 typedef enum {
@@ -85,7 +85,8 @@ void system_shutdown(shutdown_action_t action);  /* PID 1 only: kill all, unmoun
 
 /* supervisor.c */
 typedef struct supervisor supervisor_t;
-supervisor_t *supervisor_create(config_t *cfg, const int *order);
+/* boot_start_ms: CLOCK_MONOTONIC at process entry; boot ends when all services are ready */
+supervisor_t *supervisor_create(config_t *cfg, const int *order, long long boot_start_ms);
 void supervisor_destroy(supervisor_t *s);
 void supervisor_request_shutdown(supervisor_t *s);
 void supervisor_wake(supervisor_t *s);  /* async-signal-safe, e.g. from SIGCHLD */

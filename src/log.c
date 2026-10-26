@@ -78,7 +78,7 @@ void log_giveup(const char *name, int restarts)
 		(void)!write(crash_fd, buf, strlen(buf));
 }
 
-void log_boot(int boot_ms, int total, int started)
+void log_boot(int boot_ms, int total, int ready)
 {
 	static const char *const paths[] = { BOOT_FILE, BOOT_FILE_RUN, BOOT_FILE_ALT };
 	char buf[128];
@@ -86,7 +86,7 @@ void log_boot(int boot_ms, int total, int started)
 	int fd;
 
 	snprintf(buf, sizeof(buf), "boot_ms=%d\nservices_total=%d\nservices_started=%d\n",
-		boot_ms, total, started);
+		boot_ms, total, ready);
 	for (i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
 		fd = open(paths[i], O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
 		if (fd >= 0) {

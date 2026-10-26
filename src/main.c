@@ -56,9 +56,7 @@ int main(int argc, char **argv)
 {
 	config_t cfg;
 	int order[MINIT_MAX_SERVICES];
-	struct timespec t0, t1;
-	int boot_ms;
-	int started = 0;
+	struct timespec t0;
 	const char *config_path;
 	char *env_config;
 	char cmdline_config[MINIT_EXEC_LEN] = "";
@@ -127,7 +125,8 @@ int main(int argc, char **argv)
 		return fail();
 	}
 
-	g_supervisor = supervisor_create(&cfg, order);
+	g_supervisor = supervisor_create(&cfg, order,
+		(long long)t0.tv_sec * 1000 + t0.tv_nsec / 1000000);
 	if (!g_supervisor) {
 		fprintf(stderr, "minit: out of memory\n");
 		return fail();
@@ -148,12 +147,7 @@ int main(int argc, char **argv)
 	sa.sa_flags = SA_NOCLDSTOP | SA_RESTART;
 	sigaction(SIGCHLD, &sa, NULL);
 
-	started = supervisor_start_all(g_supervisor);
-
-	clock_gettime(CLOCK_MONOTONIC, &t1);
-	boot_ms = (int)((t1.tv_sec - t0.tv_sec) * 1000 +
-			(t1.tv_nsec - t0.tv_nsec) / 1000000);
-	log_boot(boot_ms, cfg.nservices, started);
+	supervisor_start_all(g_supervisor);
 
 	supervisor_run(g_supervisor);
 	supervisor_destroy(g_supervisor);

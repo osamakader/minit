@@ -29,6 +29,8 @@ struct supervisor {
 	long long spawn_ms[MINIT_MAX_SERVICES];  /* monotonic */
 	long long restart_at[MINIT_MAX_SERVICES];  /* monotonic ms, 0 = now */
 	int notify_fd[MINIT_MAX_SERVICES];  /* read end of the ready_fd pipe, -1 = none */
+	long long boot_start_ms;
+	int boot_logged;
 	int wake_fd[2];  /* self-pipe: signal handlers wake the poll() loop */
 	volatile sig_atomic_t shutdown;
 };
@@ -238,7 +240,7 @@ static int backoff_delay(const service_t *svc, int restart_count)
 	return svc->respawn_delay * mult;
 }
 
-supervisor_t *supervisor_create(config_t *cfg, const int *order)
+supervisor_t *supervisor_create(config_t *cfg, const int *order, long long boot_start_ms)
 {
 	supervisor_t *s;
 	int i;
@@ -255,6 +257,7 @@ supervisor_t *supervisor_create(config_t *cfg, const int *order)
 		fcntl(s->wake_fd[i], F_SETFL, O_NONBLOCK);
 	}
 
+	s->boot_start_ms = boot_start_ms;
 	memcpy(&s->config, cfg, sizeof(s->config));
 	s->nservices = cfg->nservices;
 	for (i = 0; i < s->nservices; i++) {
@@ -387,6 +390,47 @@ static int start_due(supervisor_t *s)
 	return (int)next;
 }
 
+/*
+ * Boot is complete when nothing is STARTING and every PENDING service can
+ * never start because a dependency stopped or failed for good. Write the
+ * boot report the first time that holds.
+ */
+static void check_boot_done(supervisor_t *s)
+{
+	int blocked[MINIT_MAX_SERVICES] = { 0 };
+	int i, j, idx, prov, ready = 0;
+
+	if (s->boot_logged)
+		return;
+	/* topological order: providers are classified before their dependents */
+	for (i = 0; i < s->nservices; i++) {
+		const service_t *svc;
+		idx = s->order[i];
+		svc = &s->config.services[idx];
+		switch (s->states[idx]) {
+		case STATE_STARTING:
+			return;
+		case STATE_PENDING:
+			for (j = 0; j < svc->ndeps && !blocked[idx]; j++) {
+				prov = deps_find_provider(&s->config, svc->depends[j]);
+				blocked[idx] = s->states[prov] == STATE_STOPPED ||
+					       s->states[prov] == STATE_FAILED || blocked[prov];
+			}
+			if (!blocked[idx])
+				return;  /* still due to start */
+			break;
+		case STATE_RUNNING:
+		case STATE_DONE:
+			ready++;
+			break;
+		default:
+			break;
+		}
+	}
+	s->boot_logged = 1;
+	log_boot((int)(now_ms() - s->boot_start_ms), s->nservices, ready);
+}
+
 static void drain_wake(supervisor_t *s)
 {
 	char buf[64];
@@ -441,6 +485,7 @@ int supervisor_run(supervisor_t *s)
 		/* files can't be polled: check again soon while someone waits on one */
 		if (check_ready_files(s) && (timeout < 0 || timeout > READY_FILE_POLL_MS))
 			timeout = READY_FILE_POLL_MS;
+		check_boot_done(s);
 		if (s->shutdown)
 			break;
 
