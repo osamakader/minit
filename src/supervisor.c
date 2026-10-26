@@ -16,6 +16,7 @@
 #define SHUTDOWN_TICKS   300  /* 30s total before SIGKILL */
 #define RESTART_MAX_MS   60000
 #define SPAWN_RETRY_MS   1000
+#define MAX_POLL_FDS     (1 + MINIT_MAX_SERVICES)
 
 struct supervisor {
 	config_t config;
@@ -26,6 +27,7 @@ struct supervisor {
 	int restart_count[MINIT_MAX_SERVICES];
 	long long spawn_ms[MINIT_MAX_SERVICES];  /* monotonic */
 	long long restart_at[MINIT_MAX_SERVICES];  /* monotonic ms, 0 = now */
+	int notify_fd[MINIT_MAX_SERVICES];  /* read end of the ready_fd pipe, -1 = none */
 	int wake_fd[2];  /* self-pipe: signal handlers wake the poll() loop */
 	volatile sig_atomic_t shutdown;
 };
@@ -98,13 +100,39 @@ int exec_split(const char *exec, char *buf, size_t bufsz, char *argv[MINIT_MAX_A
 	return argc;
 }
 
+static void close_notify(supervisor_t *s, int idx)
+{
+	if (s->notify_fd[idx] >= 0) {
+		close(s->notify_fd[idx]);
+		s->notify_fd[idx] = -1;
+	}
+}
+
+/* Read from a ready_fd pipe: a newline means ready, EOF means it will never be. */
+static void handle_notify(supervisor_t *s, int idx)
+{
+	char buf[64];
+	ssize_t n = read(s->notify_fd[idx], buf, sizeof(buf));
+
+	if (n < 0)
+		return;  /* EAGAIN/EINTR: try again on the next wakeup */
+	if (n > 0 && !memchr(buf, '\n', (size_t)n))
+		return;
+	if (n == 0)
+		fprintf(stderr, "minit: %s: closed ready_fd without signalling readiness\n",
+			s->config.services[idx].name);
+	else if (s->states[idx] == STATE_STARTING)
+		s->states[idx] = STATE_RUNNING;
+	close_notify(s, idx);
+}
+
 static int spawn(supervisor_t *s, int idx)
 {
 	service_t *svc = &s->config.services[idx];
 	char exec_buf[MINIT_EXEC_LEN];
 	char *argv[MINIT_MAX_ARGS + 1];
 	pid_t pid;
-	int argc, err, errpipe[2];
+	int argc, err, errpipe[2], notify[2] = { -1, -1 };
 	ssize_t n;
 
 	argc = exec_split(svc->exec, exec_buf, sizeof(exec_buf), argv);
@@ -117,10 +145,25 @@ static int spawn(supervisor_t *s, int idx)
 	fcntl(errpipe[0], F_SETFD, FD_CLOEXEC);
 	fcntl(errpipe[1], F_SETFD, FD_CLOEXEC);
 
+	if (svc->ready_fd && pipe(notify) < 0) {
+		close(errpipe[0]);
+		close(errpipe[1]);
+		return -1;
+	}
+	if (svc->ready_fd) {
+		fcntl(notify[0], F_SETFD, FD_CLOEXEC);
+		fcntl(notify[0], F_SETFL, O_NONBLOCK);
+		fcntl(notify[1], F_SETFD, FD_CLOEXEC);
+	}
+
 	pid = fork();
 	if (pid < 0) {
 		close(errpipe[0]);
 		close(errpipe[1]);
+		if (svc->ready_fd) {
+			close(notify[0]);
+			close(notify[1]);
+		}
 		return -1;
 	}
 
@@ -130,6 +173,15 @@ static int spawn(supervisor_t *s, int idx)
 		sigemptyset(&none);
 		sigprocmask(SIG_SETMASK, &none, NULL);
 		setsid();
+		if (svc->ready_fd) {
+			/* move errpipe out of the way before dup2() replaces that fd */
+			if (errpipe[1] == svc->ready_fd)
+				errpipe[1] = fcntl(errpipe[1], F_DUPFD_CLOEXEC, svc->ready_fd + 1);
+			if (notify[1] == svc->ready_fd)
+				fcntl(notify[1], F_SETFD, 0);  /* dup2 to itself keeps CLOEXEC */
+			else
+				dup2(notify[1], svc->ready_fd);
+		}
 		/* searches PATH when argv[0] has no slash (default PATH if unset) */
 		execvp(argv[0], argv);
 		err = errno;
@@ -138,6 +190,11 @@ static int spawn(supervisor_t *s, int idx)
 	}
 
 	close(errpipe[1]);
+	if (svc->ready_fd) {
+		close(notify[1]);
+		close_notify(s, idx);
+		s->notify_fd[idx] = notify[0];
+	}
 	do {
 		n = read(errpipe[0], &err, sizeof(err));
 	} while (n < 0 && errno == EINTR);
@@ -148,7 +205,7 @@ static int spawn(supervisor_t *s, int idx)
 			svc->name, argv[0], strerror(err));
 
 	s->pids[idx] = pid;
-	s->states[idx] = svc->oneshot ? STATE_STARTING : STATE_RUNNING;
+	s->states[idx] = (svc->oneshot || svc->ready_fd) ? STATE_STARTING : STATE_RUNNING;
 	s->spawn_ms[idx] = now_ms();
 	return 0;
 }
@@ -199,12 +256,16 @@ supervisor_t *supervisor_create(config_t *cfg, const int *order)
 		s->order[i] = order[i];
 		s->states[i] = STATE_PENDING;
 		s->pids[i] = 0;
+		s->notify_fd[i] = -1;
 	}
 	return s;
 }
 
 void supervisor_destroy(supervisor_t *s)
 {
+	int i;
+	for (i = 0; i < s->nservices; i++)
+		close_notify(s, i);
 	close(s->wake_fd[0]);
 	close(s->wake_fd[1]);
 	free(s);
@@ -240,6 +301,7 @@ static void handle_exit(supervisor_t *s, int idx, int status)
 		sig = WTERMSIG(status);
 
 	log_crash(svc->name, s->pids[idx], exit_code, sig, s->restart_count[idx]);
+	close_notify(s, idx);
 
 	s->pids[idx] = 0;
 	s->states[idx] = STATE_STOPPED;
@@ -347,20 +409,39 @@ static void shutdown_all(supervisor_t *s)
 
 int supervisor_run(supervisor_t *s)
 {
-	struct pollfd pfd;
-	int timeout;
-
-	pfd.fd = s->wake_fd[0];
-	pfd.events = POLLIN;
+	struct pollfd pfd[MAX_POLL_FDS];
+	int owner[MAX_POLL_FDS];  /* service index for each pfd, -1 = wake pipe */
+	int timeout, nfds, i;
 
 	while (!s->shutdown) {
 		reap_children(s);
 		timeout = start_due(s);
 		if (s->shutdown)
 			break;
+
+		nfds = 0;
+		pfd[nfds].fd = s->wake_fd[0];
+		pfd[nfds].events = POLLIN;
+		owner[nfds++] = -1;
+		for (i = 0; i < s->nservices; i++) {
+			if (s->notify_fd[i] < 0)
+				continue;
+			pfd[nfds].fd = s->notify_fd[i];
+			pfd[nfds].events = POLLIN;
+			owner[nfds++] = i;
+		}
+
 		/* a signal arriving after reap/start writes to the pipe, so poll() still wakes */
-		if (poll(&pfd, 1, timeout) > 0)
-			drain_wake(s);
+		if (poll(pfd, (nfds_t)nfds, timeout) <= 0)
+			continue;
+		for (i = 0; i < nfds; i++) {
+			if (!pfd[i].revents)
+				continue;
+			if (owner[i] < 0)
+				drain_wake(s);
+			else
+				handle_notify(s, owner[i]);
+		}
 	}
 
 	shutdown_all(s);

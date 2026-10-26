@@ -217,6 +217,11 @@ int config_parse(const char *path, config_t *cfg)
 				parse_error(path, lineno, "type must be simple or oneshot");
 				errors++;
 			}
+		} else if (strcmp(key, "ready_fd") == 0) {
+			if (parse_int(val, 3, 63, &cur->ready_fd) < 0) {
+				parse_error(path, lineno, "ready_fd must be 3..63");
+				errors++;
+			}
 		} else if (strcmp(key, "depends") == 0) {
 			err = parse_names(val, cur->depends, MINIT_MAX_DEPS, &cur->ndeps);
 			if (err) {
@@ -256,6 +261,11 @@ int config_parse(const char *path, config_t *cfg)
 		const service_t *svc = &cfg->services[i];
 		if (!svc->exec[0]) {
 			fprintf(stderr, "minit: %s: service '%s' has no exec\n", path, svc->name);
+			errors++;
+		}
+		if (svc->oneshot && svc->ready_fd) {
+			fprintf(stderr, "minit: %s: oneshot service '%s' cannot use ready_fd\n",
+				path, svc->name);
 			errors++;
 		}
 		if (svc->oneshot && svc->restart == RESTART_ALWAYS) {
