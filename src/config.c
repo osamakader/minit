@@ -208,6 +208,15 @@ int config_parse(const char *path, config_t *cfg)
 			} else {
 				cur->restart = r;
 			}
+		} else if (strcmp(key, "type") == 0) {
+			if (strcmp(val, "simple") == 0) {
+				cur->oneshot = 0;
+			} else if (strcmp(val, "oneshot") == 0) {
+				cur->oneshot = 1;
+			} else {
+				parse_error(path, lineno, "type must be simple or oneshot");
+				errors++;
+			}
 		} else if (strcmp(key, "depends") == 0) {
 			err = parse_names(val, cur->depends, MINIT_MAX_DEPS, &cur->ndeps);
 			if (err) {
@@ -244,9 +253,14 @@ int config_parse(const char *path, config_t *cfg)
 	fclose(f);
 
 	for (i = 0; i < cfg->nservices; i++) {
-		if (!cfg->services[i].exec[0]) {
-			fprintf(stderr, "minit: %s: service '%s' has no exec\n",
-				path, cfg->services[i].name);
+		const service_t *svc = &cfg->services[i];
+		if (!svc->exec[0]) {
+			fprintf(stderr, "minit: %s: service '%s' has no exec\n", path, svc->name);
+			errors++;
+		}
+		if (svc->oneshot && svc->restart == RESTART_ALWAYS) {
+			fprintf(stderr, "minit: %s: oneshot service '%s' cannot use restart = always\n",
+				path, svc->name);
 			errors++;
 		}
 	}

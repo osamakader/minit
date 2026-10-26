@@ -53,7 +53,7 @@ static int deps_ready(const supervisor_t *s, int idx)
 	int i, prov;
 	for (i = 0; i < svc->ndeps; i++) {
 		prov = deps_find_provider(&s->config, svc->depends[i]);
-		if (prov >= 0 && s->states[prov] != STATE_RUNNING)
+		if (prov >= 0 && s->states[prov] != STATE_RUNNING && s->states[prov] != STATE_DONE)
 			return 0;
 	}
 	return 1;
@@ -148,7 +148,7 @@ static int spawn(supervisor_t *s, int idx)
 			svc->name, argv[0], strerror(err));
 
 	s->pids[idx] = pid;
-	s->states[idx] = STATE_RUNNING;
+	s->states[idx] = svc->oneshot ? STATE_STARTING : STATE_RUNNING;
 	s->spawn_ms[idx] = now_ms();
 	return 0;
 }
@@ -244,6 +244,10 @@ static void handle_exit(supervisor_t *s, int idx, int status)
 	s->pids[idx] = 0;
 	s->states[idx] = STATE_STOPPED;
 
+	if (svc->oneshot && WIFEXITED(status) && exit_code == 0) {
+		s->states[idx] = STATE_DONE;
+		return;
+	}
 	if (!restart_wanted(svc, WIFEXITED(status) && exit_code == 0))
 		return;
 

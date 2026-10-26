@@ -21,16 +21,19 @@ typedef enum {
 } restart_policy_t;
 
 typedef enum {
-	STATE_PENDING,
-	STATE_RUNNING,
+	STATE_PENDING,   /* waiting for dependencies or a restart delay */
+	STATE_STARTING,  /* spawned, not ready yet */
+	STATE_RUNNING,   /* ready: dependents may start */
+	STATE_DONE,      /* oneshot exited 0: dependents may start */
 	STATE_STOPPED,
-	STATE_FAILED   /* gave up after respawn_max quick restarts */
+	STATE_FAILED     /* gave up after respawn_max quick restarts */
 } service_state_t;
 
 typedef struct {
 	char name[MINIT_NAME_LEN];
 	char exec[MINIT_EXEC_LEN];
 	restart_policy_t restart;
+	int oneshot;         /* type = oneshot: ready once it exits 0 */
 	/* the service name is always provided too, without being listed here */
 	char provides[MINIT_MAX_PROVIDES][MINIT_PROVIDES_LEN];
 	int nprovides;
