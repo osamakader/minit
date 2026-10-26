@@ -35,6 +35,7 @@ typedef struct {
 	restart_policy_t restart;
 	int oneshot;         /* type = oneshot: ready once it exits 0 */
 	int ready_fd;        /* >= 3: ready once it writes a newline to this fd; 0 = at spawn */
+	char ready_file[MINIT_EXEC_LEN];  /* ready once this path exists; removed at spawn */
 	/* the service name is always provided too, without being listed here */
 	char provides[MINIT_MAX_PROVIDES][MINIT_PROVIDES_LEN];
 	int nprovides;

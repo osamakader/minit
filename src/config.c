@@ -222,6 +222,11 @@ int config_parse(const char *path, config_t *cfg)
 				parse_error(path, lineno, "ready_fd must be 3..63");
 				errors++;
 			}
+		} else if (strcmp(key, "ready_file") == 0) {
+			if (val[0] != '/' || copy_value(cur->ready_file, MINIT_EXEC_LEN, val) < 0) {
+				parse_error(path, lineno, "ready_file must be an absolute path");
+				errors++;
+			}
 		} else if (strcmp(key, "depends") == 0) {
 			err = parse_names(val, cur->depends, MINIT_MAX_DEPS, &cur->ndeps);
 			if (err) {
@@ -263,9 +268,9 @@ int config_parse(const char *path, config_t *cfg)
 			fprintf(stderr, "minit: %s: service '%s' has no exec\n", path, svc->name);
 			errors++;
 		}
-		if (svc->oneshot && svc->ready_fd) {
-			fprintf(stderr, "minit: %s: oneshot service '%s' cannot use ready_fd\n",
-				path, svc->name);
+		if ((svc->oneshot + !!svc->ready_fd + !!svc->ready_file[0]) > 1) {
+			fprintf(stderr, "minit: %s: service '%s': use only one of type = oneshot, "
+				"ready_fd and ready_file\n", path, svc->name);
 			errors++;
 		}
 		if (svc->oneshot && svc->restart == RESTART_ALWAYS) {

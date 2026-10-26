@@ -17,6 +17,7 @@
 #define RESTART_MAX_MS   60000
 #define SPAWN_RETRY_MS   1000
 #define MAX_POLL_FDS     (1 + MINIT_MAX_SERVICES)
+#define READY_FILE_POLL_MS 100
 
 struct supervisor {
 	config_t config;
@@ -145,6 +146,9 @@ static int spawn(supervisor_t *s, int idx)
 	fcntl(errpipe[0], F_SETFD, FD_CLOEXEC);
 	fcntl(errpipe[1], F_SETFD, FD_CLOEXEC);
 
+	if (svc->ready_file[0])
+		unlink(svc->ready_file);  /* a file left by the previous run must not count */
+
 	if (svc->ready_fd && pipe(notify) < 0) {
 		close(errpipe[0]);
 		close(errpipe[1]);
@@ -205,7 +209,8 @@ static int spawn(supervisor_t *s, int idx)
 			svc->name, argv[0], strerror(err));
 
 	s->pids[idx] = pid;
-	s->states[idx] = (svc->oneshot || svc->ready_fd) ? STATE_STARTING : STATE_RUNNING;
+	s->states[idx] = (svc->oneshot || svc->ready_fd || svc->ready_file[0]) ?
+		STATE_STARTING : STATE_RUNNING;
 	s->spawn_ms[idx] = now_ms();
 	return 0;
 }
@@ -343,6 +348,22 @@ static void reap_children(supervisor_t *s)
 	}
 }
 
+/* Mark STARTING services ready whose ready_file exists. Returns 1 if any still wait. */
+static int check_ready_files(supervisor_t *s)
+{
+	int i, waiting = 0;
+	for (i = 0; i < s->nservices; i++) {
+		const service_t *svc = &s->config.services[i];
+		if (s->states[i] != STATE_STARTING || !svc->ready_file[0])
+			continue;
+		if (access(svc->ready_file, F_OK) == 0)
+			s->states[i] = STATE_RUNNING;
+		else
+			waiting = 1;
+	}
+	return waiting;
+}
+
 /* Spawn pending services that are due. Returns ms until the next one is due, or -1. */
 static int start_due(supervisor_t *s)
 {
@@ -415,7 +436,11 @@ int supervisor_run(supervisor_t *s)
 
 	while (!s->shutdown) {
 		reap_children(s);
+		check_ready_files(s);
 		timeout = start_due(s);
+		/* files can't be polled: check again soon while someone waits on one */
+		if (check_ready_files(s) && (timeout < 0 || timeout > READY_FILE_POLL_MS))
+			timeout = READY_FILE_POLL_MS;
 		if (s->shutdown)
 			break;
 
