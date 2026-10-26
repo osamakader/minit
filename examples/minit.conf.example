@@ -6,16 +6,25 @@ exec = /sbin/syslogd -n
 restart = always
 provides = syslog
 
+# every service also provides its own name
+[service klogd]
+exec = /sbin/klogd -n
+restart = always
+depends = syslogd
+
+# setup script: dependents wait until it has exited 0
 [service network]
+type = oneshot
 exec = /etc/minit/network.sh
-restart = on-failure
 depends = syslog
 provides = network
 
 [service httpd]
-exec = /usr/sbin/lighttpd -f /etc/lighttpd.conf
+exec = /usr/sbin/lighttpd -D -f /etc/lighttpd.conf
 restart = on-failure
 depends = network
 respawn_delay = 2
 respawn_max = 5
 respawn_window = 60
+log = file
+log_size = 512
