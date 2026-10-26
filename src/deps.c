@@ -2,32 +2,54 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Find service index that provides the given name. -1 if not found. */
-static int find_provider(const config_t *cfg, const char *name)
+int deps_provides(const service_t *svc, const char *name)
+{
+	int i;
+	if (strcmp(svc->name, name) == 0)
+		return 1;
+	for (i = 0; i < svc->nprovides; i++) {
+		if (strcmp(svc->provides[i], name) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+int deps_find_provider(const config_t *cfg, const char *name)
 {
 	int i;
 	for (i = 0; i < cfg->nservices; i++) {
-		if (cfg->services[i].provides[0] && strcmp(cfg->services[i].provides, name) == 0)
+		if (deps_provides(&cfg->services[i], name))
 			return i;
 	}
 	return -1;
 }
 
-/* Every depends must name exactly one provider, and not the service itself. */
+/* Warn about every other service that also provides name. */
+static int check_unique(const config_t *cfg, int idx, const char *name)
+{
+	int j, errors = 0;
+	for (j = idx + 1; j < cfg->nservices; j++) {
+		if (deps_provides(&cfg->services[j], name)) {
+			fprintf(stderr, "minit: '%s' and '%s' both provide '%s'\n",
+				cfg->services[idx].name, cfg->services[j].name, name);
+			errors++;
+		}
+	}
+	return errors;
+}
+
+/* Every name must have one provider, and every depends must name another service. */
 static int deps_check(const config_t *cfg)
 {
 	int i, j, prov, errors = 0;
 
 	for (i = 0; i < cfg->nservices; i++) {
 		const service_t *s = &cfg->services[i];
-		prov = s->provides[0] ? find_provider(cfg, s->provides) : i;
-		if (prov != i) {
-			fprintf(stderr, "minit: '%s' and '%s' both provide '%s'\n",
-				cfg->services[prov].name, s->name, s->provides);
-			errors++;
-		}
+		errors += check_unique(cfg, i, s->name);
+		for (j = 0; j < s->nprovides; j++)
+			errors += check_unique(cfg, i, s->provides[j]);
 		for (j = 0; j < s->ndeps; j++) {
-			prov = find_provider(cfg, s->depends[j]);
+			prov = deps_find_provider(cfg, s->depends[j]);
 			if (prov < 0) {
 				fprintf(stderr, "minit: '%s' depends on '%s', which no service provides\n",
 					s->name, s->depends[j]);
@@ -67,18 +89,16 @@ int deps_resolve(config_t *cfg, int order[MINIT_MAX_SERVICES])
 		int u = queue[qhead++];
 		order[sorted++] = u;
 
-		/* Find services that depend on what u provides; a name listed twice counts twice */
-		if (cfg->services[u].provides[0]) {
-			for (i = 0; i < cfg->nservices; i++) {
-				service_t *s = &cfg->services[i];
-				if (in_degree[i] <= 0) continue;
-				for (j = 0; j < s->ndeps; j++) {
-					if (strcmp(s->depends[j], cfg->services[u].provides) == 0)
-						in_degree[i]--;
-				}
-				if (in_degree[i] == 0)
-					queue[qtail++] = i;
+		/* Find services that depend on something u provides; a name listed twice counts twice */
+		for (i = 0; i < cfg->nservices; i++) {
+			service_t *s = &cfg->services[i];
+			if (in_degree[i] <= 0) continue;
+			for (j = 0; j < s->ndeps; j++) {
+				if (deps_provides(&cfg->services[u], s->depends[j]))
+					in_degree[i]--;
 			}
+			if (in_degree[i] == 0)
+				queue[qtail++] = i;
 		}
 	}
 

@@ -47,23 +47,12 @@ static int find_by_pid(const supervisor_t *s, pid_t pid)
 	return -1;
 }
 
-static int find_provider_idx(const supervisor_t *s, const char *name)
-{
-	int i;
-	for (i = 0; i < s->nservices; i++) {
-		if (s->config.services[i].provides[0] &&
-		    strcmp(s->config.services[i].provides, name) == 0)
-			return i;
-	}
-	return -1;
-}
-
 static int deps_ready(const supervisor_t *s, int idx)
 {
 	const service_t *svc = &s->config.services[idx];
 	int i, prov;
 	for (i = 0; i < svc->ndeps; i++) {
-		prov = find_provider_idx(s, svc->depends[i]);
+		prov = deps_find_provider(&s->config, svc->depends[i]);
 		if (prov >= 0 && s->states[prov] != STATE_RUNNING)
 			return 0;
 	}

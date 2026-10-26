@@ -66,21 +66,22 @@ static int copy_value(char *dst, size_t size, const char *v)
 	return 0;
 }
 
-static const char *parse_depends(const char *v, service_t *svc)
+/* Parse a comma-separated list of names into list[max]. Returns an error or NULL. */
+static const char *parse_names(const char *v, char list[][MINIT_PROVIDES_LEN], int max, int *n)
 {
 	char buf[CONFIG_LINE_LEN];
 	char *p, *tok;
 	strcpy(buf, v);  /* v comes from a line of at most CONFIG_LINE_LEN */
-	svc->ndeps = 0;
+	*n = 0;
 	for (p = buf; (tok = strtok(p, ",")); p = NULL) {
 		trim(tok);
 		if (!*tok)
 			continue;
-		if (svc->ndeps >= MINIT_MAX_DEPS)
-			return "too many depends";
-		if (copy_value(svc->depends[svc->ndeps], MINIT_PROVIDES_LEN, tok) < 0)
-			return "depends name too long";
-		svc->ndeps++;
+		if (*n >= max)
+			return "too many names";
+		if (copy_value(list[*n], MINIT_PROVIDES_LEN, tok) < 0)
+			return "name too long";
+		(*n)++;
 	}
 	return NULL;
 }
@@ -208,14 +209,15 @@ int config_parse(const char *path, config_t *cfg)
 				cur->restart = r;
 			}
 		} else if (strcmp(key, "depends") == 0) {
-			err = parse_depends(val, cur);
+			err = parse_names(val, cur->depends, MINIT_MAX_DEPS, &cur->ndeps);
 			if (err) {
-				parse_error(path, lineno, "%s", err);
+				parse_error(path, lineno, "depends: %s (max %d)", err, MINIT_MAX_DEPS);
 				errors++;
 			}
 		} else if (strcmp(key, "provides") == 0) {
-			if (copy_value(cur->provides, MINIT_PROVIDES_LEN, val) < 0) {
-				parse_error(path, lineno, "provides too long");
+			err = parse_names(val, cur->provides, MINIT_MAX_PROVIDES, &cur->nprovides);
+			if (err) {
+				parse_error(path, lineno, "provides: %s (max %d)", err, MINIT_MAX_PROVIDES);
 				errors++;
 			}
 		} else if (strcmp(key, "respawn_delay") == 0) {

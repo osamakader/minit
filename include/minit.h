@@ -7,6 +7,7 @@
 
 #define MINIT_MAX_SERVICES  16
 #define MINIT_MAX_DEPS      8
+#define MINIT_MAX_PROVIDES  4
 #define MINIT_MAX_ARGS      32
 #define MINIT_NAME_LEN      64
 #define MINIT_EXEC_LEN      256
@@ -30,7 +31,9 @@ typedef struct {
 	char name[MINIT_NAME_LEN];
 	char exec[MINIT_EXEC_LEN];
 	restart_policy_t restart;
-	char provides[MINIT_PROVIDES_LEN];  /* empty = no provides */
+	/* the service name is always provided too, without being listed here */
+	char provides[MINIT_MAX_PROVIDES][MINIT_PROVIDES_LEN];
+	int nprovides;
 	char depends[MINIT_MAX_DEPS][MINIT_PROVIDES_LEN];
 	int ndeps;
 	int respawn_delay;   /* seconds, default 1 */
@@ -48,6 +51,8 @@ int config_parse(const char *path, config_t *cfg);
 
 /* deps.c */
 int deps_resolve(config_t *cfg, int order[MINIT_MAX_SERVICES]);
+int deps_provides(const service_t *svc, const char *name);  /* its name or a provides entry */
+int deps_find_provider(const config_t *cfg, const char *name);  /* service index or -1 */
 
 /* log.c */
 int log_init(const char *dir);  /* NULL = use default, try /var/log/minit then /tmp/minit */
