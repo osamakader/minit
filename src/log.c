@@ -11,10 +11,10 @@
 #define CRASH_LOG "/var/log/minit/crashes.log"
 #define CRASH_LOG_ALT "/tmp/minit/crashes.log"
 #define BOOT_FILE "/var/run/minit.boot"
+#define BOOT_FILE_RUN "/run/minit.boot"   /* /var/run is often missing on minimal rootfs */
 #define BOOT_FILE_ALT "/tmp/minit.boot"
 
 static int crash_fd = -1;
-static char boot_path[128] = BOOT_FILE;
 
 static void mkdir_p(const char *path)
 {
@@ -40,7 +40,6 @@ int log_init(const char *dir)
 	if (crash_fd < 0) {
 		mkdir_p(LOG_DIR_ALT);
 		crash_fd = open(CRASH_LOG_ALT, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
-		strncpy(boot_path, BOOT_FILE_ALT, sizeof(boot_path) - 1);
 	}
 	return (crash_fd >= 0) ? 0 : -1;
 }
@@ -81,13 +80,19 @@ void log_giveup(const char *name, int restarts)
 
 void log_boot(int boot_ms, int total, int started)
 {
-	int fd;
+	static const char *const paths[] = { BOOT_FILE, BOOT_FILE_RUN, BOOT_FILE_ALT };
 	char buf[128];
+	size_t i;
+	int fd;
+
 	snprintf(buf, sizeof(buf), "boot_ms=%d\nservices_total=%d\nservices_started=%d\n",
 		boot_ms, total, started);
-	fd = open(boot_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-	if (fd >= 0) {
-		(void)!write(fd, buf, strlen(buf));
-		close(fd);
+	for (i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+		fd = open(paths[i], O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+		if (fd >= 0) {
+			(void)!write(fd, buf, strlen(buf));
+			close(fd);
+			return;
+		}
 	}
 }

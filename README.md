@@ -11,7 +11,7 @@ Minimal PID1 replacement for embedded systems. A middle ground between BusyBox i
 - **Signal handling** — SIGTERM, SIGINT → graceful shutdown; as PID 1, reboot/halt/poweroff (see below)
 - **PID 1 boot setup** — mounts `/proc`, `/sys`, `/dev`, `/dev/pts`, `/dev/shm`, `/run`, `/tmp`, console, hostname, random seed
 - **Emergency shell** — `/bin/sh` on the console on fatal boot errors or with `single`
-- **Boot time measurement** — write `boot_ms` to `/var/run/minit.boot`
+- **Boot time measurement** — write `boot_ms` to `/var/run/minit.boot` (or `/run/minit.boot` if `/var/run` is missing)
 - **Dependency ordering** — topological start order via `depends` / `provides`
 - **Crash logging** — log exits to `/var/log/minit/crashes.log`
 - **Minimal footprint** — about 100KB as a static musl binary (budget: 500KB)
