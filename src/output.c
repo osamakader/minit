@@ -13,7 +13,7 @@
  * the pipe survives restarts and never reports EOF, and every instance of the
  * service writes its stdout/stderr into it.
  */
-static struct {
+static struct output {
 	int used;
 	int rd, wr;
 	int log_fd;   /* log = file */
@@ -71,6 +71,42 @@ int output_prepare(int idx, const service_t *svc)
 	else if (kmsg_fd < 0 && (kmsg_fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC)) < 0)
 		fprintf(stderr, "minit: %s: cannot open /dev/kmsg: %s\n", svc->name, strerror(errno));
 	return out[idx].wr;
+}
+
+static void close_output(struct output *o)
+{
+	if (!o->used)
+		return;
+	close(o->rd);
+	close(o->wr);
+	if (o->log_fd >= 0)
+		close(o->log_fd);
+	memset(o, 0, sizeof(*o));
+}
+
+void output_reset(int idx)
+{
+	close_output(&out[idx]);
+}
+
+void output_remap(const int *old_of_new, int nnew, int nold)
+{
+	struct output old[MINIT_MAX_SERVICES];
+	int kept[MINIT_MAX_SERVICES] = { 0 };
+	int i;
+
+	memcpy(old, out, sizeof(out));
+	memset(out, 0, sizeof(out));
+	for (i = 0; i < nnew; i++) {
+		if (old_of_new[i] >= 0) {
+			out[i] = old[old_of_new[i]];
+			kept[old_of_new[i]] = 1;
+		}
+	}
+	for (i = 0; i < nold; i++) {
+		if (!kept[i])
+			close_output(&old[i]);
+	}
 }
 
 int output_poll_fd(int idx)

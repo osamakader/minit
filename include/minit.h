@@ -97,6 +97,9 @@ void control_reply(int fd, const char *text);  /* send and close */
 int output_prepare(int idx, const service_t *svc);  /* fd for the child's 1/2, or -1 */
 int output_poll_fd(int idx);  /* fd to poll for output, or -1 */
 void output_handle(int idx, const service_t *svc);  /* read what is there and store it */
+void output_reset(int idx);  /* close it; the next output_prepare() starts over */
+/* after a reload: new service i takes over old_of_new[i] (-1 = new); unclaimed ones close */
+void output_remap(const int *old_of_new, int nnew, int nold);
 
 /* system.c: PID 1 setup */
 typedef enum {
@@ -128,7 +131,12 @@ int supervisor_action(const supervisor_t *s);  /* requested action, or -1 */
 void supervisor_listen(supervisor_t *s, const char *socket_path);  /* serve minitctl */
 void supervisor_wake(supervisor_t *s);  /* async-signal-safe, e.g. from SIGCHLD */
 int supervisor_start_all(supervisor_t *s);  /* returns count started; failures are retried later */
-int supervisor_run(supervisor_t *s);  /* main loop, returns when shutdown */
+#define SUPERVISOR_SHUTDOWN 0
+#define SUPERVISOR_RELOAD   1
+int supervisor_run(supervisor_t *s);  /* main loop: SUPERVISOR_SHUTDOWN after stopping all, or RELOAD */
+void supervisor_request_reload(supervisor_t *s);  /* async-signal-safe */
+/* switch to a new, valid config: keep unchanged services, restart changed ones, start new ones */
+void supervisor_reload(supervisor_t *s, const config_t *cfg, const int *order);
 /* split exec into argv (shell-style quotes, no expansion); -1 on unterminated quote */
 int exec_split(const char *exec, char *buf, size_t bufsz, char *argv[MINIT_MAX_ARGS + 1]);
 

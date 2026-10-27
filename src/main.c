@@ -45,6 +45,27 @@ static void on_signal(int sig)
 		supervisor_request_shutdown(g_supervisor);
 }
 
+static void on_hup(int sig)
+{
+	(void)sig;
+	if (g_supervisor)
+		supervisor_request_reload(g_supervisor);
+}
+
+/* Parse the config again and switch to it; keep running the old one if it is invalid. */
+static void reload_config(const char *path)
+{
+	static config_t cfg;  /* large: keep it off the stack */
+	int order[MINIT_MAX_SERVICES];
+
+	fprintf(stderr, "minit: reloading %s\n", path);
+	if (config_parse(path, &cfg) < 0 || cfg.nservices == 0 || deps_resolve(&cfg, order) < 0) {
+		fprintf(stderr, "minit: reload failed, keeping the running configuration\n");
+		return;
+	}
+	supervisor_reload(g_supervisor, &cfg, order);
+}
+
 static void on_child(int sig)
 {
 	(void)sig;
@@ -146,6 +167,8 @@ int main(int argc, char **argv)
 		sigaction(SIGUSR2, &sa, NULL);
 		reboot(RB_DISABLE_CAD);  /* Ctrl-Alt-Del sends SIGINT instead of rebooting */
 	}
+	sa.sa_handler = on_hup;
+	sigaction(SIGHUP, &sa, NULL);
 	sa.sa_handler = on_child;
 	sa.sa_flags = SA_NOCLDSTOP | SA_RESTART;
 	sigaction(SIGCHLD, &sa, NULL);
@@ -155,7 +178,8 @@ int main(int argc, char **argv)
 
 	supervisor_start_all(g_supervisor);
 
-	supervisor_run(g_supervisor);
+	while (supervisor_run(g_supervisor) == SUPERVISOR_RELOAD)
+		reload_config(config_path);
 	if (supervisor_action(g_supervisor) >= 0)
 		g_action = supervisor_action(g_supervisor);
 	supervisor_destroy(g_supervisor);

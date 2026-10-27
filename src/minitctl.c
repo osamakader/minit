@@ -12,9 +12,10 @@ static int usage(const char *prog)
 	fprintf(stderr,
 		"Usage: %s status\n"
 		"       %s start|stop|restart <service>\n"
+		"       %s reload\n"
 		"       %s reboot|poweroff|halt\n"
 		"Socket: %s, or MINIT_SOCKET\n",
-		prog, prog, prog, MINIT_SOCKET);
+		prog, prog, prog, prog, MINIT_SOCKET);
 	return 2;
 }
 

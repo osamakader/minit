@@ -36,6 +36,9 @@ struct supervisor {
 	int held[MINIT_MAX_SERVICES];       /* stopped by minitctl: never restarted */
 	int restart_req[MINIT_MAX_SERVICES];  /* minitctl restart: start again on exit */
 	long long kill_at[MINIT_MAX_SERVICES];  /* stop requested: SIGKILL then, 0 = none */
+	/* still running after being removed by a reload, until reaped */
+	pid_t retired[MINIT_MAX_SERVICES];
+	long long retired_kill_at[MINIT_MAX_SERVICES];
 	long long boot_start_ms;
 	int boot_logged;
 	int action;      /* shutdown action requested through the supervisor, -1 = none */
@@ -43,6 +46,7 @@ struct supervisor {
 	char ctl_path[108];  /* sun_path size */
 	int wake_fd[2];  /* self-pipe: signal handlers wake the poll() loop */
 	volatile sig_atomic_t shutdown;
+	volatile sig_atomic_t reload;
 };
 
 static long long now_ms(void)
@@ -395,8 +399,14 @@ static void reap_children(supervisor_t *s)
 
 	while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
 		idx = find_by_pid(s, pid);
-		if (idx >= 0)
+		if (idx >= 0) {
 			handle_exit(s, idx, status);
+			continue;
+		}
+		for (idx = 0; idx < MINIT_MAX_SERVICES; idx++) {
+			if (s->retired[idx] == pid)
+				s->retired[idx] = 0;
+		}
 	}
 }
 
@@ -465,6 +475,16 @@ static int check_stop_deadlines(supervisor_t *s)
 		}
 		kill(-s->pids[i], SIGKILL);
 		s->kill_at[i] = 0;
+	}
+	for (i = 0; i < MINIT_MAX_SERVICES; i++) {
+		if (!s->retired[i] || !s->retired_kill_at[i])
+			continue;
+		if (now < s->retired_kill_at[i]) {
+			next = min_timeout(next, (int)(s->retired_kill_at[i] - now));
+			continue;
+		}
+		kill(-s->retired[i], SIGKILL);
+		s->retired_kill_at[i] = 0;
 	}
 	return next;
 }
@@ -629,6 +649,10 @@ static void handle_control(supervisor_t *s)
 	else if (arg && (strcmp(req, "start") == 0 || strcmp(req, "stop") == 0 ||
 			 strcmp(req, "restart") == 0))
 		cmd_service(s, req, arg, reply, sizeof(reply));
+	else if (!arg && strcmp(req, "reload") == 0) {
+		snprintf(reply, sizeof(reply), "reload requested\n");
+		supervisor_request_reload(s);
+	}
 	else
 		snprintf(reply, sizeof(reply), "error: unknown command '%.64s'\n", req);
 	control_reply(fd, reply);
@@ -685,6 +709,10 @@ static void shutdown_all(supervisor_t *s)
 		if (!any) break;
 		nanosleep(&tick, NULL);
 	}
+	for (idx = 0; idx < MINIT_MAX_SERVICES; idx++) {
+		if (s->retired[idx] > 0)
+			kill(-s->retired[idx], SIGKILL);
+	}
 	for (idx = 0; idx < s->nservices; idx++) {
 		/* also hits children that outlived the service's main process */
 		if (groups[idx] > 0)
@@ -702,6 +730,10 @@ int supervisor_run(supervisor_t *s)
 	int timeout, nfds, i;
 
 	while (!s->shutdown) {
+		if (s->reload) {
+			s->reload = 0;
+			return SUPERVISOR_RELOAD;
+		}
 		reap_children(s);
 		check_ready_files(s);
 		timeout = start_due(s);
@@ -758,7 +790,111 @@ int supervisor_run(supervisor_t *s)
 	}
 
 	shutdown_all(s);
-	return 0;
+	return SUPERVISOR_SHUTDOWN;
+}
+
+void supervisor_request_reload(supervisor_t *s)
+{
+	s->reload = 1;
+	supervisor_wake(s);
+}
+
+/* Stop a service that a reload removed; keep track of it until it is reaped. */
+static void retire(supervisor_t *s, pid_t pid)
+{
+	int i;
+
+	kill(-pid, SIGTERM);
+	for (i = 0; i < MINIT_MAX_SERVICES; i++) {
+		if (!s->retired[i]) {
+			s->retired[i] = pid;
+			s->retired_kill_at[i] = now_ms() + STOP_TIMEOUT_MS;
+			return;
+		}
+	}
+	kill(-pid, SIGKILL);  /* no slot left */
+}
+
+void supervisor_reload(supervisor_t *s, const config_t *cfg, const int *order)
+{
+	int old_of_new[MINIT_MAX_SERVICES], claimed[MINIT_MAX_SERVICES] = { 0 };
+	int changed[MINIT_MAX_SERVICES] = { 0 };
+	int i, j, added = 0, nchanged = 0, removed = 0;
+	supervisor_t *o;
+
+	o = malloc(sizeof(*o));  /* the old state; too big for PID 1's stack */
+	if (!o) {
+		fprintf(stderr, "minit: reload: out of memory\n");
+		return;
+	}
+	memcpy(o, s, sizeof(*o));
+
+	for (j = 0; j < cfg->nservices; j++) {
+		i = find_by_name(o, cfg->services[j].name);
+		old_of_new[j] = i;
+		if (i < 0) {
+			s->pids[j] = 0;
+			s->states[j] = STATE_PENDING;
+			s->restart_count[j] = 0;
+			s->spawn_ms[j] = 0;
+			s->restart_at[j] = 0;
+			s->notify_fd[j] = -1;
+			s->timed_out[j] = s->held[j] = s->restart_req[j] = 0;
+			s->kill_at[j] = 0;
+			added++;
+			continue;
+		}
+		claimed[i] = 1;
+		s->pids[j] = o->pids[i];
+		s->states[j] = o->states[i];
+		s->restart_count[j] = o->restart_count[i];
+		s->spawn_ms[j] = o->spawn_ms[i];
+		s->restart_at[j] = o->restart_at[i];
+		s->notify_fd[j] = o->notify_fd[i];
+		s->timed_out[j] = o->timed_out[i];
+		s->held[j] = o->held[i];
+		s->restart_req[j] = o->restart_req[i];
+		s->kill_at[j] = o->kill_at[i];
+		/* config_parse() memsets every service, so memcmp is exact */
+		changed[j] = memcmp(&o->config.services[i], &cfg->services[j], sizeof(service_t)) != 0;
+		nchanged += changed[j];
+	}
+	for (i = 0; i < o->nservices; i++) {
+		if (claimed[i])
+			continue;
+		removed++;
+		if (o->pids[i] > 0)
+			retire(s, o->pids[i]);
+		if (o->notify_fd[i] >= 0)
+			close(o->notify_fd[i]);
+	}
+
+	if (strcmp(o->config.watchdog, cfg->watchdog) != 0 ||
+	    o->config.watchdog_timeout != cfg->watchdog_timeout)
+		fprintf(stderr, "minit: reload: [system] changes take effect after a restart\n");
+	memcpy(&s->config, cfg, sizeof(s->config));
+	s->nservices = cfg->nservices;
+	memcpy(s->order, order, sizeof(s->order));
+	output_remap(old_of_new, cfg->nservices, o->nservices);
+
+	for (j = 0; j < s->nservices; j++) {
+		if (!changed[j] || s->held[j])
+			continue;
+		if (o->config.services[old_of_new[j]].log != cfg->services[j].log)
+			output_reset(j);
+		if (s->pids[j] > 0) {
+			s->restart_req[j] = 1;  /* start again with the new config once it exits */
+			stop_service(s, j);
+		} else if (s->states[j] != STATE_STARTING) {
+			/* stopped, failed or done: give the new config a fresh try */
+			s->states[j] = STATE_PENDING;
+			s->restart_count[j] = 0;
+			s->restart_at[j] = 0;
+		}
+	}
+	free(o);
+	fprintf(stderr, "minit: reloaded: %d added, %d changed, %d removed\n",
+		added, nchanged, removed);
 }
 
 void supervisor_wake(supervisor_t *s)
