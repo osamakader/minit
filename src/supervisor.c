@@ -40,6 +40,7 @@ struct supervisor {
 	int boot_logged;
 	int action;      /* shutdown action requested through the supervisor, -1 = none */
 	int ctl_fd;      /* minitctl listening socket, -1 = none */
+	char ctl_path[108];  /* sun_path size */
 	int wake_fd[2];  /* self-pipe: signal handlers wake the poll() loop */
 	volatile sig_atomic_t shutdown;
 };
@@ -293,8 +294,10 @@ void supervisor_destroy(supervisor_t *s)
 	int i;
 	for (i = 0; i < s->nservices; i++)
 		close_notify(s, i);
-	if (s->ctl_fd >= 0)
+	if (s->ctl_fd >= 0) {
 		close(s->ctl_fd);
+		unlink(s->ctl_path);
+	}
 	close(s->wake_fd[0]);
 	close(s->wake_fd[1]);
 	free(s);
@@ -628,6 +631,7 @@ static void handle_control(supervisor_t *s)
 void supervisor_listen(supervisor_t *s, const char *socket_path)
 {
 	s->ctl_fd = control_open(socket_path);
+	snprintf(s->ctl_path, sizeof(s->ctl_path), "%s", socket_path);
 }
 
 static void drain_wake(supervisor_t *s)
