@@ -620,6 +620,12 @@ static void handle_control(supervisor_t *s)
 		*arg++ = '\0';
 	if (strcmp(req, "status") == 0)
 		cmd_status(s, reply, sizeof(reply));
+	else if (!arg && (strcmp(req, "reboot") == 0 || strcmp(req, "poweroff") == 0 ||
+			  strcmp(req, "halt") == 0)) {
+		snprintf(reply, sizeof(reply), "%s requested\n", req);
+		supervisor_request_action(s, req[0] == 'r' ? SHUTDOWN_REBOOT :
+					     req[0] == 'p' ? SHUTDOWN_POWEROFF : SHUTDOWN_HALT);
+	}
 	else if (arg && (strcmp(req, "start") == 0 || strcmp(req, "stop") == 0 ||
 			 strcmp(req, "restart") == 0))
 		cmd_service(s, req, arg, reply, sizeof(reply));
