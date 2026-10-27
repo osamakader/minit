@@ -1,12 +1,16 @@
 #include "minit.h"
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/watchdog.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
+
+/* from <linux/watchdog.h> (stable ABI), which toolchains without kernel headers lack */
+#define WDIOC_KEEPALIVE  _IOR('W', 5, int)
+#define WDIOC_SETTIMEOUT _IOWR('W', 6, int)
+#define WDIOC_GETTIMEOUT _IOR('W', 7, int)
 
 #define DEFAULT_INTERVAL_MS 1000  /* when the driver does not report its timeout */
 
