@@ -308,6 +308,15 @@ int config_parse(const char *path, config_t *cfg)
 				parse_error(path, lineno, "ready_timeout must be 1..3600 (seconds)");
 				errors++;
 			}
+		} else if (strcmp(key, "critical") == 0) {
+			if (strcmp(val, "yes") == 0) {
+				cur->critical = 1;
+			} else if (strcmp(val, "no") == 0) {
+				cur->critical = 0;
+			} else {
+				parse_error(path, lineno, "critical must be yes or no");
+				errors++;
+			}
 		} else if (strcmp(key, "depends") == 0) {
 			err = parse_names(val, cur->depends, MINIT_MAX_DEPS, &cur->ndeps);
 			if (err) {

@@ -32,6 +32,7 @@ struct supervisor {
 	int timed_out[MINIT_MAX_SERVICES];  /* killed for ready_timeout, waiting for the exit */
 	long long boot_start_ms;
 	int boot_logged;
+	int action;      /* shutdown action requested through the supervisor, -1 = none */
 	int wake_fd[2];  /* self-pipe: signal handlers wake the poll() loop */
 	volatile sig_atomic_t shutdown;
 };
@@ -267,6 +268,7 @@ supervisor_t *supervisor_create(config_t *cfg, const int *order, long long boot_
 	}
 
 	s->boot_start_ms = boot_start_ms;
+	s->action = -1;
 	memcpy(&s->config, cfg, sizeof(s->config));
 	s->nservices = cfg->nservices;
 	for (i = 0; i < s->nservices; i++) {
@@ -305,6 +307,13 @@ int supervisor_start_all(supervisor_t *s)
 	return started;
 }
 
+static void critical_failed(supervisor_t *s, int idx)
+{
+	fprintf(stderr, "minit: critical service %s failed, rebooting\n",
+		s->config.services[idx].name);
+	supervisor_request_action(s, SHUTDOWN_REBOOT);
+}
+
 static void handle_exit(supervisor_t *s, int idx, int status)
 {
 	service_t *svc = &s->config.services[idx];
@@ -328,8 +337,11 @@ static void handle_exit(supervisor_t *s, int idx, int status)
 		s->states[idx] = STATE_DONE;
 		return;
 	}
-	if (!restart_wanted(svc, WIFEXITED(status) && exit_code == 0))
+	if (!restart_wanted(svc, WIFEXITED(status) && exit_code == 0)) {
+		if (svc->critical && !(WIFEXITED(status) && exit_code == 0))
+			critical_failed(s, idx);
 		return;
+	}
 
 	/* Reset restart count if service ran for > respawn_window */
 	if (now - s->spawn_ms[idx] > (long long)svc->respawn_window * 1000)
@@ -338,6 +350,8 @@ static void handle_exit(supervisor_t *s, int idx, int status)
 	if (svc->respawn_max > 0 && s->restart_count[idx] >= svc->respawn_max) {
 		s->states[idx] = STATE_FAILED;
 		log_giveup(svc->name, s->restart_count[idx]);
+		if (svc->critical)
+			critical_failed(s, idx);
 		return;
 	}
 	s->restart_count[idx]++;
@@ -594,6 +608,17 @@ void supervisor_wake(supervisor_t *s)
 	char c = 0;
 	(void)!write(s->wake_fd[1], &c, 1);
 	errno = saved;
+}
+
+void supervisor_request_action(supervisor_t *s, shutdown_action_t action)
+{
+	s->action = (int)action;
+	supervisor_request_shutdown(s);
+}
+
+int supervisor_action(const supervisor_t *s)
+{
+	return s->action;
 }
 
 void supervisor_request_shutdown(supervisor_t *s)

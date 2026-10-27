@@ -44,6 +44,7 @@ typedef struct {
 	int ready_fd;        /* >= 3: ready once it writes a newline to this fd; 0 = at spawn */
 	char ready_file[MINIT_EXEC_LEN];  /* ready once this path exists; removed at spawn */
 	int ready_timeout;   /* seconds a service may stay STARTING before it is killed; 0 = no limit */
+	int critical;        /* reboot if it fails for good */
 	log_mode_t log;      /* where stdout/stderr go */
 	int log_size_kb;     /* log = file: rotate at this size */
 	/* the service name is always provided too, without being listed here */
@@ -114,6 +115,9 @@ typedef struct supervisor supervisor_t;
 supervisor_t *supervisor_create(config_t *cfg, const int *order, long long boot_start_ms);
 void supervisor_destroy(supervisor_t *s);
 void supervisor_request_shutdown(supervisor_t *s);
+/* stop all services, then have main() perform action; also used by the supervisor itself */
+void supervisor_request_action(supervisor_t *s, shutdown_action_t action);
+int supervisor_action(const supervisor_t *s);  /* requested action, or -1 */
 void supervisor_wake(supervisor_t *s);  /* async-signal-safe, e.g. from SIGCHLD */
 int supervisor_start_all(supervisor_t *s);  /* returns count started; failures are retried later */
 int supervisor_run(supervisor_t *s);  /* main loop, returns when shutdown */

@@ -153,6 +153,8 @@ int main(int argc, char **argv)
 	supervisor_start_all(g_supervisor);
 
 	supervisor_run(g_supervisor);
+	if (supervisor_action(g_supervisor) >= 0)
+		g_action = supervisor_action(g_supervisor);
 	supervisor_destroy(g_supervisor);
 	g_supervisor = NULL;
 
