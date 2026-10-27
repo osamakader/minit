@@ -19,6 +19,7 @@
 #define MAX_POLL_FDS     (2 + 2 * MINIT_MAX_SERVICES)  /* wake, control, ready_fd, output */
 #define OWNER_WAKE       (-1)
 #define OWNER_CONTROL    (-2)
+#define STOP_TIMEOUT_MS  10000  /* minitctl stop/restart: SIGKILL after this */
 #define READY_FILE_POLL_MS 100
 
 struct supervisor {
@@ -32,6 +33,9 @@ struct supervisor {
 	long long restart_at[MINIT_MAX_SERVICES];  /* monotonic ms, 0 = now */
 	int notify_fd[MINIT_MAX_SERVICES];  /* read end of the ready_fd pipe, -1 = none */
 	int timed_out[MINIT_MAX_SERVICES];  /* killed for ready_timeout, waiting for the exit */
+	int held[MINIT_MAX_SERVICES];       /* stopped by minitctl: never restarted */
+	int restart_req[MINIT_MAX_SERVICES];  /* minitctl restart: start again on exit */
+	long long kill_at[MINIT_MAX_SERVICES];  /* stop requested: SIGKILL then, 0 = none */
 	long long boot_start_ms;
 	int boot_logged;
 	int action;      /* shutdown action requested through the supervisor, -1 = none */
@@ -338,6 +342,18 @@ static void handle_exit(supervisor_t *s, int idx, int status)
 	s->pids[idx] = 0;
 	s->states[idx] = STATE_STOPPED;
 	s->timed_out[idx] = 0;
+	s->kill_at[idx] = 0;
+
+	/* stopped or restarted on request: no restart policy, backoff or critical reboot */
+	if (s->held[idx])
+		return;
+	if (s->restart_req[idx]) {
+		s->restart_req[idx] = 0;
+		s->restart_count[idx] = 0;
+		s->states[idx] = STATE_PENDING;
+		s->restart_at[idx] = 0;
+		return;
+	}
 
 	if (svc->oneshot && WIFEXITED(status) && exit_code == 0) {
 		s->states[idx] = STATE_DONE;
@@ -431,6 +447,25 @@ static int check_ready_timeouts(supervisor_t *s)
 	return next;
 }
 
+/* SIGKILL services that ignored a stop request. Returns ms until the next deadline, or -1. */
+static int check_stop_deadlines(supervisor_t *s)
+{
+	long long now = now_ms();
+	int i, next = -1;
+
+	for (i = 0; i < s->nservices; i++) {
+		if (!s->kill_at[i] || s->pids[i] <= 0)
+			continue;
+		if (now < s->kill_at[i]) {
+			next = min_timeout(next, (int)(s->kill_at[i] - now));
+			continue;
+		}
+		kill(-s->pids[i], SIGKILL);
+		s->kill_at[i] = 0;
+	}
+	return next;
+}
+
 /* Spawn pending services that are due. Returns ms until the next one is due, or -1. */
 static int start_due(supervisor_t *s)
 {
@@ -513,16 +548,78 @@ static void cmd_status(const supervisor_t *s, char *out, size_t len)
 	}
 }
 
+static int find_by_name(const supervisor_t *s, const char *name)
+{
+	int i;
+	for (i = 0; i < s->nservices; i++) {
+		if (strcmp(s->config.services[i].name, name) == 0)
+			return i;
+	}
+	return -1;
+}
+
+static void stop_service(supervisor_t *s, int idx)
+{
+	kill(-s->pids[idx], SIGTERM);
+	s->kill_at[idx] = now_ms() + STOP_TIMEOUT_MS;
+}
+
+/* start, stop or restart one service; writes the reply */
+static void cmd_service(supervisor_t *s, const char *cmd, const char *name, char *out, size_t len)
+{
+	int idx = find_by_name(s, name);
+	int running;
+
+	if (idx < 0) {
+		snprintf(out, len, "error: no service '%.64s'\n", name);
+		return;
+	}
+	running = s->pids[idx] > 0;
+	if (strcmp(cmd, "stop") == 0) {
+		s->held[idx] = 1;
+		s->restart_req[idx] = 0;
+		if (running) {
+			stop_service(s, idx);
+			snprintf(out, len, "stopping %s\n", name);
+		} else {
+			s->states[idx] = STATE_STOPPED;
+			snprintf(out, len, "%s stopped\n", name);
+		}
+		return;
+	}
+	/* start and restart */
+	s->held[idx] = 0;
+	if (running && strcmp(cmd, "start") == 0) {
+		snprintf(out, len, "%s is already running\n", name);
+	} else if (running) {
+		s->restart_req[idx] = 1;
+		stop_service(s, idx);
+		snprintf(out, len, "restarting %s\n", name);
+	} else {
+		s->restart_count[idx] = 0;
+		s->states[idx] = STATE_PENDING;
+		s->restart_at[idx] = 0;
+		snprintf(out, len, "starting %s\n", name);
+	}
+}
+
 static void handle_control(supervisor_t *s)
 {
 	char req[256], reply[CONTROL_REPLY_LEN];
+	char *arg;
 	int fd;
 
 	fd = control_accept(s->ctl_fd, req, sizeof(req));
 	if (fd < 0)
 		return;
+	arg = strchr(req, ' ');
+	if (arg)
+		*arg++ = '\0';
 	if (strcmp(req, "status") == 0)
 		cmd_status(s, reply, sizeof(reply));
+	else if (arg && (strcmp(req, "start") == 0 || strcmp(req, "stop") == 0 ||
+			 strcmp(req, "restart") == 0))
+		cmd_service(s, req, arg, reply, sizeof(reply));
 	else
 		snprintf(reply, sizeof(reply), "error: unknown command '%.64s'\n", req);
 	control_reply(fd, reply);
@@ -603,6 +700,7 @@ int supervisor_run(supervisor_t *s)
 			timeout = min_timeout(timeout, READY_FILE_POLL_MS);
 		timeout = min_timeout(timeout, check_ready_timeouts(s));
 		timeout = min_timeout(timeout, watchdog_due());
+		timeout = min_timeout(timeout, check_stop_deadlines(s));
 		check_boot_done(s);
 		if (s->shutdown)
 			break;
