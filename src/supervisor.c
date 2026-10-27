@@ -493,12 +493,13 @@ static void drain_outputs(supervisor_t *s)
 
 static void shutdown_all(supervisor_t *s)
 {
+	pid_t groups[MINIT_MAX_SERVICES];  /* each service leads its own process group */
 	int i, idx;
 	for (i = s->nservices - 1; i >= 0; i--) {
 		idx = s->order[i];
-		if (s->pids[idx] > 0) {
-			kill(s->pids[idx], SIGTERM);
-		}
+		groups[idx] = s->pids[idx];
+		if (s->pids[idx] > 0)
+			kill(-s->pids[idx], SIGTERM);
 	}
 	for (i = 0; i < SHUTDOWN_TICKS; i++) {
 		struct timespec tick = { 0, SHUTDOWN_TICK_MS * 1000000L };
@@ -519,10 +520,11 @@ static void shutdown_all(supervisor_t *s)
 		nanosleep(&tick, NULL);
 	}
 	for (idx = 0; idx < s->nservices; idx++) {
-		if (s->pids[idx] > 0) {
-			kill(s->pids[idx], SIGKILL);
+		/* also hits children that outlived the service's main process */
+		if (groups[idx] > 0)
+			kill(-groups[idx], SIGKILL);
+		if (s->pids[idx] > 0)
 			waitpid(s->pids[idx], NULL, 0);
-		}
 	}
 }
 
