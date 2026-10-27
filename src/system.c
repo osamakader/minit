@@ -191,11 +191,14 @@ void system_shutdown(shutdown_action_t action)
 		return;
 
 	fprintf(stderr, "minit: %s\n", what[action]);
+	watchdog_ping();
 	kill_all();
+	watchdog_ping();
 	system_seed_save();
 	sync();
 	unmount_all();
 	sync();
+	watchdog_ping();
 	reboot(cmd);
 	system_hang();  /* reboot() failed */
 }

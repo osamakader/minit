@@ -125,6 +125,9 @@ int main(int argc, char **argv)
 		return fail();
 	}
 
+	if (cfg.watchdog[0])
+		watchdog_open(cfg.watchdog, cfg.watchdog_timeout);
+
 	g_supervisor = supervisor_create(&cfg, order,
 		(long long)t0.tv_sec * 1000 + t0.tv_nsec / 1000000);
 	if (!g_supervisor) {
@@ -153,6 +156,10 @@ int main(int argc, char **argv)
 	supervisor_destroy(g_supervisor);
 	g_supervisor = NULL;
 
+	/* a reboot keeps it armed, so a hung shutdown still resets the board */
+	if (!is_pid1 || g_action != SHUTDOWN_REBOOT)
+		watchdog_disarm();
+	watchdog_ping();
 	if (is_pid1)
 		system_shutdown(g_action);
 	return 0;

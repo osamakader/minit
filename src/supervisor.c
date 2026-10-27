@@ -516,6 +516,7 @@ static void shutdown_all(supervisor_t *s)
 			if (s->pids[idx] > 0) any = 1;
 		}
 		drain_outputs(s);  /* keep what services print while stopping */
+		watchdog_due();
 		if (!any) break;
 		nanosleep(&tick, NULL);
 	}
@@ -543,6 +544,7 @@ int supervisor_run(supervisor_t *s)
 		if (check_ready_files(s))
 			timeout = min_timeout(timeout, READY_FILE_POLL_MS);
 		timeout = min_timeout(timeout, check_ready_timeouts(s));
+		timeout = min_timeout(timeout, watchdog_due());
 		check_boot_done(s);
 		if (s->shutdown)
 			break;

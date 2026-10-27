@@ -59,6 +59,9 @@ typedef struct {
 typedef struct {
 	service_t services[MINIT_MAX_SERVICES];
 	int nservices;
+	/* [system] section */
+	char watchdog[MINIT_EXEC_LEN];  /* device to keep alive, e.g. /dev/watchdog; empty = none */
+	int watchdog_timeout;  /* seconds to program into it; 0 = leave the driver's */
 } config_t;
 
 /* config.c */
@@ -75,6 +78,12 @@ void log_crash(const char *name, pid_t pid, int exit_code, int signal, int resta
 void log_giveup(const char *name, int restarts);
 void log_boot(int boot_ms, int total, int ready);
 const char *log_dir(void);  /* directory chosen by log_init() */
+
+/* watchdog.c: hardware watchdog, pinged at half its timeout */
+int watchdog_open(const char *path, int timeout);
+void watchdog_ping(void);
+int watchdog_due(void);  /* ping if due; ms until the next ping, -1 if no watchdog */
+void watchdog_disarm(void);  /* magic close, so a halted system is not reset */
 
 /* output.c: capture service stdout/stderr (log = file | kmsg) */
 int output_prepare(int idx, const service_t *svc);  /* fd for the child's 1/2, or -1 */

@@ -2,7 +2,7 @@ CC      ?= cc
 CFLAGS  ?= -Wall -Wextra -O2
 LDFLAGS ?=
 
-SRC     = src/main.c src/config.c src/deps.c src/log.c src/supervisor.c src/system.c src/output.c
+SRC     = src/main.c src/config.c src/deps.c src/log.c src/supervisor.c src/system.c src/output.c src/watchdog.c
 OBJ     = $(SRC:.c=.o)
 TARGET  = minit
 

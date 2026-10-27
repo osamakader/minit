@@ -111,6 +111,27 @@ static int service_exists(const config_t *cfg, const char *name)
 	return 0;
 }
 
+/* One key of the [system] section. Returns the number of errors (0 or 1). */
+static int parse_system_key(const char *path, int lineno, config_t *cfg,
+			    const char *key, const char *val)
+{
+	if (strcmp(key, "watchdog") == 0) {
+		if (val[0] != '/' || copy_value(cfg->watchdog, MINIT_EXEC_LEN, val) < 0) {
+			parse_error(path, lineno, "watchdog must be an absolute path");
+			return 1;
+		}
+	} else if (strcmp(key, "watchdog_timeout") == 0) {
+		if (parse_int(val, 1, 600, &cfg->watchdog_timeout) < 0) {
+			parse_error(path, lineno, "watchdog_timeout must be 1..600 (seconds)");
+			return 1;
+		}
+	} else {
+		parse_error(path, lineno, "unknown [system] key '%s'", key);
+		return 1;
+	}
+	return 0;
+}
+
 int config_parse(const char *path, config_t *cfg)
 {
 	FILE *f;
@@ -119,6 +140,7 @@ int config_parse(const char *path, config_t *cfg)
 	const char *err;
 	int i, r, lineno = 0, errors = 0;
 	int bad_section = 0;  /* inside a [section] that was already reported */
+	int in_system = 0, seen_system = 0;  /* [system] section */
 
 	memset(cfg, 0, sizeof(*cfg));
 
@@ -150,8 +172,19 @@ int config_parse(const char *path, config_t *cfg)
 			char *end = strchr(line, ']');
 			cur = NULL;
 			bad_section = 1;
+			in_system = 0;
+			if (strcmp(line, "[system]") == 0) {
+				if (seen_system) {
+					parse_error(path, lineno, "duplicate [system] section");
+					errors++;
+					continue;
+				}
+				seen_system = in_system = 1;
+				bad_section = 0;
+				continue;
+			}
 			if (!end || end[1] || strncmp(line, "[service ", 9) != 0) {
-				parse_error(path, lineno, "expected [service <name>]");
+				parse_error(path, lineno, "expected [system] or [service <name>]");
 				errors++;
 				continue;
 			}
@@ -196,7 +229,7 @@ int config_parse(const char *path, config_t *cfg)
 			errors++;
 			continue;
 		}
-		if (!cur) {
+		if (!cur && !in_system) {
 			if (!bad_section) {
 				parse_error(path, lineno, "key outside a [service] section");
 				errors++;
@@ -209,6 +242,11 @@ int config_parse(const char *path, config_t *cfg)
 		val = eq + 1;
 		trim(key);
 		trim(val);
+
+		if (in_system) {
+			errors += parse_system_key(path, lineno, cfg, key, val);
+			continue;
+		}
 
 		if (strcmp(key, "exec") == 0) {
 			char buf[MINIT_EXEC_LEN];
