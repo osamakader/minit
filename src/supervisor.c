@@ -29,6 +29,7 @@ struct supervisor {
 	long long spawn_ms[MINIT_MAX_SERVICES];  /* monotonic */
 	long long restart_at[MINIT_MAX_SERVICES];  /* monotonic ms, 0 = now */
 	int notify_fd[MINIT_MAX_SERVICES];  /* read end of the ready_fd pipe, -1 = none */
+	int timed_out[MINIT_MAX_SERVICES];  /* killed for ready_timeout, waiting for the exit */
 	long long boot_start_ms;
 	int boot_logged;
 	int wake_fd[2];  /* self-pipe: signal handlers wake the poll() loop */
@@ -321,6 +322,7 @@ static void handle_exit(supervisor_t *s, int idx, int status)
 
 	s->pids[idx] = 0;
 	s->states[idx] = STATE_STOPPED;
+	s->timed_out[idx] = 0;
 
 	if (svc->oneshot && WIFEXITED(status) && exit_code == 0) {
 		s->states[idx] = STATE_DONE;
@@ -373,6 +375,40 @@ static int check_ready_files(supervisor_t *s)
 			waiting = 1;
 	}
 	return waiting;
+}
+
+/* Earliest of two poll() timeouts, where -1 means none. */
+static int min_timeout(int a, int b)
+{
+	if (a < 0)
+		return b;
+	if (b < 0)
+		return a;
+	return a < b ? a : b;
+}
+
+/* Kill services that stayed STARTING past ready_timeout. Returns ms until the next deadline, or -1. */
+static int check_ready_timeouts(supervisor_t *s)
+{
+	long long now = now_ms(), deadline;
+	int i, next = -1;
+
+	for (i = 0; i < s->nservices; i++) {
+		const service_t *svc = &s->config.services[i];
+		if (s->states[i] != STATE_STARTING || !svc->ready_timeout || s->timed_out[i])
+			continue;
+		deadline = s->spawn_ms[i] + (long long)svc->ready_timeout * 1000;
+		if (now < deadline) {
+			next = min_timeout(next, (int)(deadline - now));
+			continue;
+		}
+		/* the exit is then handled like any failure, including the restart policy */
+		fprintf(stderr, "minit: %s: not ready after %ds, killing it\n",
+			svc->name, svc->ready_timeout);
+		kill(-s->pids[i], SIGKILL);  /* its process group: setsid() made it the leader */
+		s->timed_out[i] = 1;
+	}
+	return next;
 }
 
 /* Spawn pending services that are due. Returns ms until the next one is due, or -1. */
@@ -502,8 +538,9 @@ int supervisor_run(supervisor_t *s)
 		check_ready_files(s);
 		timeout = start_due(s);
 		/* files can't be polled: check again soon while someone waits on one */
-		if (check_ready_files(s) && (timeout < 0 || timeout > READY_FILE_POLL_MS))
-			timeout = READY_FILE_POLL_MS;
+		if (check_ready_files(s))
+			timeout = min_timeout(timeout, READY_FILE_POLL_MS);
+		timeout = min_timeout(timeout, check_ready_timeouts(s));
 		check_boot_done(s);
 		if (s->shutdown)
 			break;

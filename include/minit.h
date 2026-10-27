@@ -43,6 +43,7 @@ typedef struct {
 	int oneshot;         /* type = oneshot: ready once it exits 0 */
 	int ready_fd;        /* >= 3: ready once it writes a newline to this fd; 0 = at spawn */
 	char ready_file[MINIT_EXEC_LEN];  /* ready once this path exists; removed at spawn */
+	int ready_timeout;   /* seconds a service may stay STARTING before it is killed; 0 = no limit */
 	log_mode_t log;      /* where stdout/stderr go */
 	int log_size_kb;     /* log = file: rotate at this size */
 	/* the service name is always provided too, without being listed here */

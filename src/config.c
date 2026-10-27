@@ -265,6 +265,11 @@ int config_parse(const char *path, config_t *cfg)
 				parse_error(path, lineno, "log_size must be 4..65536 (KB)");
 				errors++;
 			}
+		} else if (strcmp(key, "ready_timeout") == 0) {
+			if (parse_int(val, 1, 3600, &cur->ready_timeout) < 0) {
+				parse_error(path, lineno, "ready_timeout must be 1..3600 (seconds)");
+				errors++;
+			}
 		} else if (strcmp(key, "depends") == 0) {
 			err = parse_names(val, cur->depends, MINIT_MAX_DEPS, &cur->ndeps);
 			if (err) {
@@ -309,6 +314,11 @@ int config_parse(const char *path, config_t *cfg)
 		if ((svc->oneshot + !!svc->ready_fd + !!svc->ready_file[0]) > 1) {
 			fprintf(stderr, "minit: %s: service '%s': use only one of type = oneshot, "
 				"ready_fd and ready_file\n", path, svc->name);
+			errors++;
+		}
+		if (svc->ready_timeout && !svc->oneshot && !svc->ready_fd && !svc->ready_file[0]) {
+			fprintf(stderr, "minit: %s: service '%s': ready_timeout needs type = oneshot, "
+				"ready_fd or ready_file\n", path, svc->name);
 			errors++;
 		}
 		if (svc->oneshot && svc->restart == RESTART_ALWAYS) {
