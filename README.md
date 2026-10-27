@@ -16,14 +16,17 @@ Minimal PID1 replacement for embedded systems. A middle ground between BusyBox i
 - **Oneshot services and readiness** — `type = oneshot`, `ready_fd` (s6-style notification) or `ready_file`
 - **Service output** — to the console, `/dev/null`, a rotated log file, or the kernel log
 - **Crash logging** — log exits to `/var/log/minit/crashes.log`
-- **Minimal footprint** — about 100KB as a static musl binary (budget: 500KB)
+- **Control** — `minitctl status | start | stop | restart | reload | reboot | poweroff | halt`
+- **Config reload** — SIGHUP or `minitctl reload` applies only what changed
+- **Hardware watchdog** — kept alive by minit; `critical` services reboot the board when they fail for good
+- **Minimal footprint** — about 110KB for minit and 35KB for minitctl as static musl binaries (budget: 500KB)
 
 ## Build
 
 ```sh
-make                       # dynamic ./minit
-make static CC=musl-gcc    # stripped static ./minit-static for the target rootfs
-make size CC=musl-gcc      # report the static binary size
+make                       # dynamic ./minit and ./minitctl
+make static CC=musl-gcc    # stripped static ./minit-static and ./minitctl-static for the target rootfs
+make size CC=musl-gcc      # report the static binary sizes
 ```
 
 ## Usage
@@ -57,6 +60,8 @@ Service names may use `A-Z a-z 0-9 . _ -`. Keys per `[service name]` section:
 | `ready_file` | — | Absolute path: ready once it exists. Removed before each start so a stale file does not count. |
 | `provides` | — | Comma-separated names (up to 4) others can depend on. The service name is always provided too. |
 | `depends` | — | Comma-separated names; this service starts once all their providers are ready. |
+| `ready_timeout` | — | Seconds (1–3600) a oneshot, `ready_fd` or `ready_file` service may take to become ready; then its process group is killed and the restart policy applies. |
+| `critical` | `no` | `yes`: reboot when the service fails for good (gives up after `respawn_max`, or fails with no restart left). |
 | `respawn_delay` | `1` | Base restart delay in seconds (1–60), doubled per quick restart, capped at 60s. |
 | `respawn_max` | `0` | Give up after this many quick restarts in a row (0 = never give up). |
 | `respawn_window` | `60` | A run longer than this many seconds resets the restart count. |
@@ -68,6 +73,32 @@ Use at most one of the three. The boot report is written once every service is r
 start because a dependency stopped or failed for good). The log directory is `/var/log/minit`, or
 `/tmp/minit` if that is not writable. The kernel rate-limits `/dev/kmsg` writes unless booted with
 `printk.devkmsg=on`.
+
+An optional `[system]` section holds settings for minit itself:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `watchdog` | — | Watchdog device, e.g. `/dev/watchdog`. minit pings it at half its timeout. It is disarmed (magic close) on poweroff, halt or when minit exits outside PID 1, and left armed on reboot. |
+| `watchdog_timeout` | driver default | Seconds (1–600) to program into the watchdog. |
+
+## Control
+
+`minitctl` talks to minit over `/run/minit.sock` (mode 0600; set `MINIT_SOCKET` on both sides to use
+another path):
+
+```sh
+minitctl status                   # state, pid and restart count of every service
+minitctl stop httpd               # SIGTERM its process group (SIGKILL after 10s); stays stopped
+minitctl start httpd              # start it again once its dependencies are ready
+minitctl restart httpd
+minitctl reload                   # same as SIGHUP
+minitctl reboot | poweroff | halt
+```
+
+`reload` (or SIGHUP) parses the config again and, only if it is valid, applies the difference:
+unchanged services keep running, changed ones restart with their new settings, new ones start and
+removed ones are stopped. Changes to `[system]` need a restart. An invalid config is reported and
+the running one is kept.
 
 ## Running as PID 1
 
@@ -93,7 +124,9 @@ Shutdown follows the BusyBox init convention, so BusyBox `reboot`, `halt` and `p
 | SIGINT (Ctrl-Alt-Del) | reboot |
 | SIGUSR1 | halt |
 | SIGUSR2 | power off |
+| SIGHUP | reload the config (not a shutdown) |
 
-Services are stopped in reverse dependency order, every remaining process gets SIGTERM and then
+Services are stopped in reverse dependency order (each service's whole process group gets SIGTERM,
+then SIGKILL after 30s), every remaining process gets SIGTERM and then
 SIGKILL, a fresh random seed is saved, filesystems are unmounted (or remounted read-only if busy),
 and the system reboots, halts or powers off.
