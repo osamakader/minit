@@ -5,32 +5,40 @@ LDFLAGS ?=
 SRC     = src/main.c src/config.c src/deps.c src/log.c src/supervisor.c src/system.c src/output.c src/watchdog.c src/control.c
 OBJ     = $(SRC:.c=.o)
 TARGET  = minit
+CTL     = minitctl
+CTL_OBJ = src/minitctl.o
 
 .PHONY: all clean install static size
 
-all: $(TARGET)
+all: $(TARGET) $(CTL)
 
 $(TARGET): $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^
 
-# stripped static binary for initramfs/rootfs, e.g. make static CC=musl-gcc
-static: $(TARGET)-static
+$(CTL): $(CTL_OBJ)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+# stripped static binaries for initramfs/rootfs, e.g. make static CC=musl-gcc
+static: $(TARGET)-static $(CTL)-static
 
 $(TARGET)-static: $(OBJ)
 	$(CC) $(LDFLAGS) -static -s -o $@ $^
 
-size: $(TARGET)-static
-	@ls -l $(TARGET)-static | awk '{ printf "%s: %d bytes (budget 512000)\n", $$NF, $$5 }'
-	@size $(TARGET)-static
+$(CTL)-static: $(CTL_OBJ)
+	$(CC) $(LDFLAGS) -static -s -o $@ $^
+
+size: static
+	@ls -l $(TARGET)-static $(CTL)-static | awk '{ printf "%s: %d bytes\n", $$NF, $$5; t += $$5 } END { printf "total: %d bytes (budget 512000)\n", t }'
+	@size $(TARGET)-static $(CTL)-static
 
 %.o: %.c include/minit.h
 	$(CC) $(CFLAGS) -Iinclude -c -o $@ $<
 
 clean:
-	rm -f $(OBJ) $(TARGET) $(TARGET)-static
+	rm -f $(OBJ) $(CTL_OBJ) $(TARGET) $(CTL) $(TARGET)-static $(CTL)-static
 
-install: $(TARGET)
+install: $(TARGET) $(CTL)
 	install -d $(DESTDIR)/usr/bin
-	install -m 755 $(TARGET) $(DESTDIR)/usr/bin/
+	install -m 755 $(TARGET) $(CTL) $(DESTDIR)/usr/bin/
 	install -d $(DESTDIR)/etc/minit
 	install -m 644 examples/minit.conf.example $(DESTDIR)/etc/minit/

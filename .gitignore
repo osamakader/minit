@@ -31,6 +31,8 @@
 # Executables
 minit
 minit-static
+minitctl
+minitctl-static
 *.exe
 *.out
 *.app
