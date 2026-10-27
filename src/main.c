@@ -58,7 +58,7 @@ int main(int argc, char **argv)
 	int order[MINIT_MAX_SERVICES];
 	struct timespec t0;
 	const char *config_path;
-	char *env_config;
+	char *env_config, *socket_path;
 	char cmdline_config[MINIT_EXEC_LEN] = "";
 	int single = 0, retry;
 	struct sigaction sa;
@@ -149,6 +149,9 @@ int main(int argc, char **argv)
 	sa.sa_handler = on_child;
 	sa.sa_flags = SA_NOCLDSTOP | SA_RESTART;
 	sigaction(SIGCHLD, &sa, NULL);
+
+	socket_path = getenv("MINIT_SOCKET");
+	supervisor_listen(g_supervisor, socket_path && socket_path[0] ? socket_path : MINIT_SOCKET);
 
 	supervisor_start_all(g_supervisor);
 

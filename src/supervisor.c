@@ -16,7 +16,9 @@
 #define SHUTDOWN_TICKS   300  /* 30s total before SIGKILL */
 #define RESTART_MAX_MS   60000
 #define SPAWN_RETRY_MS   1000
-#define MAX_POLL_FDS     (1 + 2 * MINIT_MAX_SERVICES)  /* wake, ready_fd, output */
+#define MAX_POLL_FDS     (2 + 2 * MINIT_MAX_SERVICES)  /* wake, control, ready_fd, output */
+#define OWNER_WAKE       (-1)
+#define OWNER_CONTROL    (-2)
 #define READY_FILE_POLL_MS 100
 
 struct supervisor {
@@ -33,6 +35,7 @@ struct supervisor {
 	long long boot_start_ms;
 	int boot_logged;
 	int action;      /* shutdown action requested through the supervisor, -1 = none */
+	int ctl_fd;      /* minitctl listening socket, -1 = none */
 	int wake_fd[2];  /* self-pipe: signal handlers wake the poll() loop */
 	volatile sig_atomic_t shutdown;
 };
@@ -269,6 +272,7 @@ supervisor_t *supervisor_create(config_t *cfg, const int *order, long long boot_
 
 	s->boot_start_ms = boot_start_ms;
 	s->action = -1;
+	s->ctl_fd = -1;
 	memcpy(&s->config, cfg, sizeof(s->config));
 	s->nservices = cfg->nservices;
 	for (i = 0; i < s->nservices; i++) {
@@ -285,6 +289,8 @@ void supervisor_destroy(supervisor_t *s)
 	int i;
 	for (i = 0; i < s->nservices; i++)
 		close_notify(s, i);
+	if (s->ctl_fd >= 0)
+		close(s->ctl_fd);
 	close(s->wake_fd[0]);
 	close(s->wake_fd[1]);
 	free(s);
@@ -489,6 +495,44 @@ static void check_boot_done(supervisor_t *s)
 	log_boot((int)(now_ms() - s->boot_start_ms), s->nservices, ready);
 }
 
+static const char *const state_names[] = {
+	"pending", "starting", "running", "done", "stopped", "failed"
+};
+
+static void cmd_status(const supervisor_t *s, char *out, size_t len)
+{
+	size_t used;
+	int i, idx;
+
+	used = (size_t)snprintf(out, len, "%-20s %-9s %7s %8s\n", "SERVICE", "STATE", "PID", "RESTARTS");
+	for (i = 0; i < s->nservices && used < len; i++) {
+		idx = s->order[i];
+		used += (size_t)snprintf(out + used, len - used, "%-20s %-9s %7d %8d\n",
+			s->config.services[idx].name, state_names[s->states[idx]],
+			(int)s->pids[idx], s->restart_count[idx]);
+	}
+}
+
+static void handle_control(supervisor_t *s)
+{
+	char req[256], reply[CONTROL_REPLY_LEN];
+	int fd;
+
+	fd = control_accept(s->ctl_fd, req, sizeof(req));
+	if (fd < 0)
+		return;
+	if (strcmp(req, "status") == 0)
+		cmd_status(s, reply, sizeof(reply));
+	else
+		snprintf(reply, sizeof(reply), "error: unknown command '%.64s'\n", req);
+	control_reply(fd, reply);
+}
+
+void supervisor_listen(supervisor_t *s, const char *socket_path)
+{
+	s->ctl_fd = control_open(socket_path);
+}
+
 static void drain_wake(supervisor_t *s)
 {
 	char buf[64];
@@ -546,7 +590,7 @@ static void shutdown_all(supervisor_t *s)
 int supervisor_run(supervisor_t *s)
 {
 	struct pollfd pfd[MAX_POLL_FDS];
-	/* per pfd: -1 = wake pipe, i = ready_fd of service i, MAX + i = output of service i */
+	/* per pfd: OWNER_*, i = ready_fd of service i, MAX + i = output of service i */
 	int owner[MAX_POLL_FDS];
 	int timeout, nfds, i;
 
@@ -566,7 +610,12 @@ int supervisor_run(supervisor_t *s)
 		nfds = 0;
 		pfd[nfds].fd = s->wake_fd[0];
 		pfd[nfds].events = POLLIN;
-		owner[nfds++] = -1;
+		owner[nfds++] = OWNER_WAKE;
+		if (s->ctl_fd >= 0) {
+			pfd[nfds].fd = s->ctl_fd;
+			pfd[nfds].events = POLLIN;
+			owner[nfds++] = OWNER_CONTROL;
+		}
 		for (i = 0; i < s->nservices; i++) {
 			if (s->notify_fd[i] < 0)
 				continue;
@@ -588,8 +637,10 @@ int supervisor_run(supervisor_t *s)
 		for (i = 0; i < nfds; i++) {
 			if (!pfd[i].revents)
 				continue;
-			if (owner[i] < 0)
+			if (owner[i] == OWNER_WAKE)
 				drain_wake(s);
+			else if (owner[i] == OWNER_CONTROL)
+				handle_control(s);
 			else if (owner[i] >= MINIT_MAX_SERVICES)
 				output_handle(owner[i] - MINIT_MAX_SERVICES,
 					      &s->config.services[owner[i] - MINIT_MAX_SERVICES]);

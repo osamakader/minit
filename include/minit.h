@@ -86,6 +86,13 @@ void watchdog_ping(void);
 int watchdog_due(void);  /* ping if due; ms until the next ping, -1 if no watchdog */
 void watchdog_disarm(void);  /* magic close, so a halted system is not reset */
 
+/* control.c: unix socket for minitctl, one request line and one reply per connection */
+#define MINIT_SOCKET "/run/minit.sock"
+#define CONTROL_REPLY_LEN 2048
+int control_open(const char *path);  /* listening fd, or -1 */
+int control_accept(int listen_fd, char *req, size_t len);  /* client fd with req read, or -1 */
+void control_reply(int fd, const char *text);  /* send and close */
+
 /* output.c: capture service stdout/stderr (log = file | kmsg) */
 int output_prepare(int idx, const service_t *svc);  /* fd for the child's 1/2, or -1 */
 int output_poll_fd(int idx);  /* fd to poll for output, or -1 */
@@ -118,6 +125,7 @@ void supervisor_request_shutdown(supervisor_t *s);
 /* stop all services, then have main() perform action; also used by the supervisor itself */
 void supervisor_request_action(supervisor_t *s, shutdown_action_t action);
 int supervisor_action(const supervisor_t *s);  /* requested action, or -1 */
+void supervisor_listen(supervisor_t *s, const char *socket_path);  /* serve minitctl */
 void supervisor_wake(supervisor_t *s);  /* async-signal-safe, e.g. from SIGCHLD */
 int supervisor_start_all(supervisor_t *s);  /* returns count started; failures are retried later */
 int supervisor_run(supervisor_t *s);  /* main loop, returns when shutdown */
