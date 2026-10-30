@@ -42,6 +42,9 @@ has "exec failures are reported" "cannot exec no-such-binary: No such file" "$o"
 o=$($M "$(conf bad '[service a]\nexec = /bin/true\ncolour = x\n')" 2>&1)
 has "config errors name file and line" "bad.conf:3: unknown key" "$o"
 
+o=$($M --check "$(conf chk '[service b]\nexec=x\ndepends=a\n[service a]\nexec=x\n')" 2>&1)
+has "--check prints the start order" "OK, 2 services; start order: a b" "$o"
+
 o=$($M "$(conf cyc '[service a]\nexec=/bin/true\ndepends=b\n[service b]\nexec=/bin/true\ndepends=a\n')" 2>&1)
 has "dependency cycles are rejected" "cycle among: a b" "$o"
 

@@ -66,6 +66,29 @@ static void reload_config(const char *path)
 	supervisor_reload(g_supervisor, &cfg, order);
 }
 
+/* minit --check: parse and resolve without starting anything. */
+static int check_config(const char *path)
+{
+	static config_t cfg;
+	int order[MINIT_MAX_SERVICES], i;
+
+	if (config_parse(path, &cfg) < 0) {
+		fprintf(stderr, "minit: cannot read or parse config %s\n", path);
+		return 1;
+	}
+	if (cfg.nservices == 0) {
+		fprintf(stderr, "minit: no services in config\n");
+		return 1;
+	}
+	if (deps_resolve(&cfg, order) < 0)
+		return 1;
+	printf("%s: OK, %d services; start order:", path, cfg.nservices);
+	for (i = 0; i < cfg.nservices; i++)
+		printf(" %s", cfg.services[order[i]].name);
+	printf("\n");
+	return 0;
+}
+
 static void on_child(int sig)
 {
 	(void)sig;
@@ -105,15 +128,20 @@ int main(int argc, char **argv)
 	}
 
 	/* as PID 1, argv holds leftover kernel cmdline words, not our arguments */
-	if (!is_pid1 && (argc > 2 || (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)))) {
+	env_config = getenv("MINIT_CONFIG");
+	if (!is_pid1 && argc >= 2 && argc <= 3 && strcmp(argv[1], "--check") == 0)
+		return check_config(argc == 3 ? argv[2] :
+				    env_config && env_config[0] ? env_config : DEFAULT_CONFIG);
+
+	if (!is_pid1 && (argc > 2 || (argc == 2 && argv[1][0] == '-'))) {
 		fprintf(stderr, "Usage: %s [config file]\n", argv[0]);
+		fprintf(stderr, "       %s --check [config file]   validate it and print the start order\n", argv[0]);
 		fprintf(stderr, "Default config: %s\n", DEFAULT_CONFIG);
 		fprintf(stderr, "Environment variable: MINIT_CONFIG\n");
 		fprintf(stderr, "Example: MINIT_CONFIG=/etc/minit.conf %s\n", argv[0]);
 		return 1;
 	}
 
-	env_config = getenv("MINIT_CONFIG");
 	if (!is_pid1 && argc == 2)
 		config_path = argv[1];
 	else if (cmdline_config[0])
