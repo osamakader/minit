@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with warnings as errors
+        run: make CFLAGS="-Wall -Wextra -Werror -O2"
+      - name: Unit and behaviour tests
+        run: make test CFLAGS="-Wall -Wextra -Werror -O2"
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests under ASan and UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          make test CFLAGS="-Wall -Wextra -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined" \
+                    LDFLAGS="-fsanitize=address,undefined"
+
+  static-musl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Static build and size budget
+        run: |
+          make static CC=musl-gcc CFLAGS="-Wall -Wextra -Werror -Os"
+          make size CC=musl-gcc
+          total=$(( $(stat -c %s minit-static) + $(stat -c %s minitctl-static) ))
+          echo "total: $total bytes"
+          test "$total" -le 512000
+      - name: Example configs are valid
+        run: |
+          for f in examples/*.conf examples/*.conf.example; do ./minit-static --check "$f"; done
