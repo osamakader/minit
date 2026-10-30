@@ -101,6 +101,12 @@ static int valid_name(const char *name)
 	return 1;
 }
 
+/* user and group: a name or a number */
+static int valid_id(const char *v)
+{
+	return v[0] && strlen(v) < MINIT_ID_LEN && valid_name(v);
+}
+
 static int service_exists(const config_t *cfg, const char *name)
 {
 	int i;
@@ -316,6 +322,13 @@ int config_parse(const char *path, config_t *cfg)
 			} else {
 				parse_error(path, lineno, "critical must be yes or no");
 				errors++;
+			}
+		} else if (strcmp(key, "user") == 0 || strcmp(key, "group") == 0) {
+			if (!valid_id(val)) {
+				parse_error(path, lineno, "%s must be a name or a number", key);
+				errors++;
+			} else {
+				strcpy(key[0] == 'u' ? cur->user : cur->group, val);
 			}
 		} else if (strcmp(key, "depends") == 0) {
 			err = parse_names(val, cur->depends, MINIT_MAX_DEPS, &cur->ndeps);

@@ -2,7 +2,9 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <poll.h>
+#include <pwd.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -143,20 +145,93 @@ static void handle_notify(supervisor_t *s, int idx)
 	close_notify(s, idx);
 }
 
+/* What the child changes before exec; resolved in the parent so errors are clear. */
+struct child_ids {
+	int set_uid, set_gid;
+	uid_t uid;
+	gid_t gid;
+	char initgroups[MINIT_ID_LEN];  /* user name for supplementary groups, or empty */
+};
+
+/* Steps of the child setup, reported back with errno when one fails. */
+enum { STEP_EXEC, STEP_SETGROUPS, STEP_SETGID, STEP_SETUID };
+static const char *const step_names[] = { "exec", "setgroups", "setgid", "setuid" };
+
+static int numeric_id(const char *v, unsigned long *out)
+{
+	char *end;
+	*out = strtoul(v, &end, 10);
+	return isdigit((unsigned char)v[0]) && !*end;
+}
+
+/* Returns -1 (after reporting it) if the user or group does not exist. */
+static int resolve_ids(const service_t *svc, struct child_ids *ids)
+{
+	struct passwd *pw = NULL;
+	struct group *gr;
+	unsigned long n;
+
+	memset(ids, 0, sizeof(*ids));
+	if (svc->user[0]) {
+		pw = numeric_id(svc->user, &n) ? getpwuid((uid_t)n) : getpwnam(svc->user);
+		if (!pw && !numeric_id(svc->user, &n)) {
+			fprintf(stderr, "minit: %s: no user '%s'\n", svc->name, svc->user);
+			return -1;
+		}
+		ids->set_uid = 1;
+		ids->uid = pw ? pw->pw_uid : (uid_t)n;
+		if (pw) {
+			ids->set_gid = 1;
+			ids->gid = pw->pw_gid;
+			snprintf(ids->initgroups, sizeof(ids->initgroups), "%s", pw->pw_name);
+		}
+	}
+	if (svc->group[0]) {
+		gr = numeric_id(svc->group, &n) ? NULL : getgrnam(svc->group);
+		if (!gr && !numeric_id(svc->group, &n)) {
+			fprintf(stderr, "minit: %s: no group '%s'\n", svc->name, svc->group);
+			return -1;
+		}
+		ids->set_gid = 1;
+		ids->gid = gr ? gr->gr_gid : (gid_t)n;
+	}
+	return 0;
+}
+
+/* In the child: drop to the service's group and user. Returns the failed step, or -1. */
+static int apply_ids(const struct child_ids *ids)
+{
+	if (ids->set_gid) {
+		/* only root can change supplementary groups; anyone else keeps their own */
+		if (geteuid() == 0 && (ids->initgroups[0] ? initgroups(ids->initgroups, ids->gid)
+							   : setgroups(1, &ids->gid)) < 0)
+			return STEP_SETGROUPS;
+		if (setgid(ids->gid) < 0)
+			return STEP_SETGID;
+	}
+	if (ids->set_uid && setuid(ids->uid) < 0)
+		return STEP_SETUID;
+	return -1;
+}
+
+/* 0 = spawned, -1 = try again later, -2 = cannot work until the config changes */
 static int spawn(supervisor_t *s, int idx)
 {
 	service_t *svc = &s->config.services[idx];
 	char exec_buf[MINIT_EXEC_LEN];
 	char *argv[MINIT_MAX_ARGS + 1];
+	struct child_ids ids;
 	pid_t pid;
-	int argc, err, errpipe[2], notify[2] = { -1, -1 }, out_fd;
+	int argc, err[2], errpipe[2], notify[2] = { -1, -1 }, out_fd;
 	ssize_t n;
 
 	argc = exec_split(svc->exec, exec_buf, sizeof(exec_buf), argv);
 	if (argc <= 0 || !argv[0][0])
 		return -1;
+	if (resolve_ids(svc, &ids) < 0)
+		return -2;
 
-	/* close-on-exec pipe: EOF means exec worked, an int means it failed with that errno */
+	/* close-on-exec pipe: EOF means exec worked, { step, errno } means that step failed */
 	if (pipe(errpipe) < 0)
 		return -1;
 	fcntl(errpipe[0], F_SETFD, FD_CLOEXEC);
@@ -210,10 +285,14 @@ static int spawn(supervisor_t *s, int idx)
 			else
 				dup2(notify[1], svc->ready_fd);
 		}
-		/* searches PATH when argv[0] has no slash (default PATH if unset) */
-		execvp(argv[0], argv);
-		err = errno;
-		(void)!write(errpipe[1], &err, sizeof(err));
+		err[0] = apply_ids(&ids);
+		if (err[0] < 0) {
+			/* searches PATH when argv[0] has no slash (default PATH if unset) */
+			execvp(argv[0], argv);
+			err[0] = STEP_EXEC;
+		}
+		err[1] = errno;
+		(void)!write(errpipe[1], err, sizeof(err));
 		_exit(127);
 	}
 
@@ -228,9 +307,12 @@ static int spawn(supervisor_t *s, int idx)
 	} while (n < 0 && errno == EINTR);
 	close(errpipe[0]);
 	/* still record the pid: the exit is reaped and restarted with backoff as usual */
-	if (n == sizeof(err))
+	if (n == sizeof(err) && err[0] == STEP_EXEC)
 		fprintf(stderr, "minit: %s: cannot exec %s: %s\n",
-			svc->name, argv[0], strerror(err));
+			svc->name, argv[0], strerror(err[1]));
+	else if (n == sizeof(err))
+		fprintf(stderr, "minit: %s: cannot start: %s: %s\n",
+			svc->name, step_names[err[0]], strerror(err[1]));
 
 	s->pids[idx] = pid;
 	s->states[idx] = (svc->oneshot || svc->ready_fd || svc->ready_file[0]) ?
@@ -314,12 +396,17 @@ int supervisor_start_all(supervisor_t *s)
 		idx = s->order[i];
 		if (!deps_ready(s, idx))
 			continue;
-		if (spawn(s, idx) < 0) {
+		switch (spawn(s, idx)) {
+		case 0:
+			started++;
+			break;
+		case -2:
+			s->states[idx] = STATE_FAILED;
+			break;
+		default:
 			/* e.g. fork() failed: the main loop retries it */
 			s->restart_at[idx] = now_ms() + SPAWN_RETRY_MS;
-			continue;
 		}
-		started++;
 	}
 	return started;
 }
@@ -501,8 +588,13 @@ static int start_due(supervisor_t *s)
 		if (s->states[idx] != STATE_PENDING || !deps_ready(s, idx))
 			continue;
 		if (s->restart_at[idx] <= now) {
-			if (spawn(s, idx) == 0)
+			int r = spawn(s, idx);
+			if (r == 0)
 				continue;
+			if (r == -2) {
+				s->states[idx] = STATE_FAILED;
+				continue;
+			}
 			s->restart_at[idx] = now + SPAWN_RETRY_MS;
 		}
 		wait = s->restart_at[idx] - now;

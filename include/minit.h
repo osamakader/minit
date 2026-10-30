@@ -13,6 +13,7 @@
 #define MINIT_EXEC_LEN      256
 #define MINIT_PROVIDES_LEN  64
 #define CONFIG_LINE_LEN     512
+#define MINIT_ID_LEN        32   /* user and group names */
 
 typedef enum {
 	RESTART_NEVER,
@@ -45,6 +46,8 @@ typedef struct {
 	char ready_file[MINIT_EXEC_LEN];  /* ready once this path exists; removed at spawn */
 	int ready_timeout;   /* seconds a service may stay STARTING before it is killed; 0 = no limit */
 	int critical;        /* reboot if it fails for good */
+	char user[MINIT_ID_LEN];   /* name or uid to run as; empty = minit's */
+	char group[MINIT_ID_LEN];  /* name or gid; empty = the user's primary group */
 	log_mode_t log;      /* where stdout/stderr go */
 	int log_size_kb;     /* log = file: rotate at this size */
 	/* the service name is always provided too, without being listed here */
