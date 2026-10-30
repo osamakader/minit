@@ -7,6 +7,7 @@ OBJ     = $(SRC:.c=.o)
 TARGET  = minit
 CTL     = minitctl
 CTL_OBJ = src/minitctl.o
+UNIT    = tests/unit
 
 .PHONY: all clean install static size test
 
@@ -31,14 +32,18 @@ size: static
 	@ls -l $(TARGET)-static $(CTL)-static | awk '{ printf "%s: %d bytes\n", $$NF, $$5; t += $$5 } END { printf "total: %d bytes (budget 512000)\n", t }'
 	@size $(TARGET)-static $(CTL)-static
 
-test: all
+$(UNIT): tests/unit.o $(filter-out src/main.o,$(OBJ))
+	$(CC) $(LDFLAGS) -o $@ $^
+
+test: all $(UNIT)
+	$(UNIT)
 	tests/regress.sh
 
 %.o: %.c include/minit.h
 	$(CC) $(CFLAGS) -Iinclude -c -o $@ $<
 
 clean:
-	rm -f $(OBJ) $(CTL_OBJ) $(TARGET) $(CTL) $(TARGET)-static $(CTL)-static
+	rm -f $(OBJ) $(CTL_OBJ) $(TARGET) $(CTL) $(TARGET)-static $(CTL)-static tests/unit.o $(UNIT)
 
 install: $(TARGET) $(CTL)
 	install -d $(DESTDIR)/usr/bin
