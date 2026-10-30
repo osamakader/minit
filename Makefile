@@ -1,8 +1,9 @@
 CC      ?= cc
 CFLAGS  ?= -Wall -Wextra -O2
 LDFLAGS ?=
+JSON    ?= 1   # JSON=0 leaves out the JSON config parser
 
-SRC     = src/main.c src/config.c src/deps.c src/log.c src/supervisor.c src/system.c src/output.c src/watchdog.c src/control.c
+SRC     = src/main.c src/config.c src/deps.c src/log.c src/supervisor.c src/system.c src/output.c src/watchdog.c src/control.c src/json.c
 OBJ     = $(SRC:.c=.o)
 TARGET  = minit
 CTL     = minitctl
@@ -39,8 +40,12 @@ test: all $(UNIT)
 	$(UNIT)
 	tests/regress.sh
 
-%.o: %.c include/minit.h
-	$(CC) $(CFLAGS) -Iinclude -c -o $@ $<
+ifeq ($(strip $(JSON)),1)
+CPPFLAGS += -DMINIT_JSON
+endif
+
+%.o: %.c include/minit.h src/config_internal.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -c -o $@ $<
 
 clean:
 	rm -f $(OBJ) $(CTL_OBJ) $(TARGET) $(CTL) $(TARGET)-static $(CTL)-static tests/unit.o $(UNIT)

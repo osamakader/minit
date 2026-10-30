@@ -15,17 +15,24 @@ static int failures, checks;
 	} \
 } while (0)
 
-/* Write text to a temporary config file and parse it. */
-static int parse(const char *text, config_t *cfg)
+/* Write text to a temporary config file and parse it; suffix picks the format by name. */
+static int parse_as(const char *text, config_t *cfg, const char *suffix)
 {
-	char path[] = "/tmp/minit-unit-XXXXXX";
-	int fd = mkstemp(path), r;
+	char path[64];
+	int fd, r;
+	snprintf(path, sizeof(path), "/tmp/minit-unit-XXXXXX%s", suffix);
+	fd = mkstemps(path, (int)strlen(suffix));
 	FILE *f = fdopen(fd, "w");
 	fputs(text, f);
 	fclose(f);
 	r = config_parse(path, cfg);
 	unlink(path);
 	return r;
+}
+
+static int parse(const char *text, config_t *cfg)
+{
+	return parse_as(text, cfg, "");
 }
 
 static int split(const char *exec, char *argv[MINIT_MAX_ARGS + 1])
@@ -174,6 +181,81 @@ static void test_deps(void)
 	CHECK(deps_resolve(&cfg, order) < 0);   /* provides clashes with a service name */
 }
 
+#ifdef MINIT_JSON
+static int parse_json(const char *text, config_t *cfg)
+{
+	return parse_as(text, cfg, ".json");
+}
+
+static void test_json_matches_conf(void)
+{
+	static config_t a, b;
+
+	CHECK(parse("[system]\nwatchdog = /dev/watchdog\nwatchdog_timeout = 20\n"
+		    "[service db]\nexec = /usr/bin/db --port 5432\nrestart = always\n"
+		    "provides = sql, storage\nready_fd = 3\nready_timeout = 30\ncritical = yes\n"
+		    "log = file\nlog_size = 128\nuser = db\ngroup = db\nworkdir = /var/db\n"
+		    "umask = 027\nnice = 5\nenv = A=1\nenv = B=two words\nenv_file = /etc/db.env\n"
+		    "respawn_delay = 2\nrespawn_max = 5\nrespawn_window = 120\n"
+		    "[service web]\ntype = oneshot\nexec = /bin/setup\ndepends = sql, db\n", &a) == 0);
+	CHECK(parse_json("{\n"
+		    "  \"system\": { \"watchdog\": \"/dev/watchdog\", \"watchdog_timeout\": 20 },\n"
+		    "  \"services\": [\n"
+		    "    { \"exec\": \"/usr/bin/db --port 5432\", \"name\": \"db\", \"restart\": \"always\",\n"
+		    "      \"provides\": [\"sql\", \"storage\"], \"ready_fd\": 3, \"ready_timeout\": 30,\n"
+		    "      \"critical\": true, \"log\": \"file\", \"log_size\": 128, \"user\": \"db\",\n"
+		    "      \"group\": \"db\", \"workdir\": \"/var/db\", \"umask\": \"027\", \"nice\": 5,\n"
+		    "      \"env\": { \"A\": \"1\", \"B\": \"two words\" }, \"env_file\": \"/etc/db.env\",\n"
+		    "      \"respawn_delay\": 2, \"respawn_max\": 5, \"respawn_window\": 120 },\n"
+		    "    { \"name\": \"web\", \"type\": \"oneshot\", \"exec\": \"/bin/setup\",\n"
+		    "      \"depends\": \"sql, db\" }\n"
+		    "  ]\n}\n", &b) == 0);
+	/* config_parse() zeroes everything first, so equal settings mean equal bytes */
+	CHECK(memcmp(&a, &b, sizeof(a)) == 0);
+}
+
+static void test_json_values(void)
+{
+	static config_t cfg;
+	char *argv[MINIT_MAX_ARGS + 1];
+
+	/* exec as an array keeps every argument intact through quoting */
+	CHECK(parse_json("{\"services\":[{\"name\":\"a\",\"exec\":[\"/bin/echo\",\"it's\","
+			 "\"two words\",\"q\\\"uote\",\"$HOME\",\"back\\\\slash\",\"\"],"
+			 "\"env\":[\"X=1\",\"Y=2\"]}]}", &cfg) == 0);
+	CHECK(split(cfg.services[0].exec, argv) == 7);
+	CHECK(strcmp(argv[1], "it's") == 0);
+	CHECK(strcmp(argv[2], "two words") == 0);
+	CHECK(strcmp(argv[3], "q\"uote") == 0);
+	CHECK(strcmp(argv[4], "$HOME") == 0);
+	CHECK(strcmp(argv[5], "back\\slash") == 0);
+	CHECK(argv[6][0] == '\0');
+	CHECK(cfg.services[0].nenv == 2 && strcmp(cfg.services[0].env[1], "Y=2") == 0);
+	CHECK(parse_json("{\"services\":[{\"name\":\"a\",\"exec\":\"\\u0041\\t\"}]}", &cfg) == 0);
+	CHECK(strcmp(cfg.services[0].exec, "A\t") == 0);
+	/* detected by content as well as by name */
+	CHECK(parse("  {\"services\":[{\"name\":\"a\",\"exec\":\"x\"}]}", &cfg) == 0 &&
+	      cfg.nservices == 1);
+}
+
+static void test_json_errors(void)
+{
+	static config_t cfg;
+
+	CHECK(parse_json("{\"services\":[{\"name\":\"a\",\"exec\":\"x\",\"colour\":\"red\"}]}", &cfg) < 0);
+	CHECK(parse_json("{\"services\":[{\"exec\":\"x\"}]}", &cfg) < 0);          /* no name */
+	CHECK(parse_json("{\"services\":[{\"name\":\"a\"}]}", &cfg) < 0);          /* no exec */
+	CHECK(parse_json("{\"services\":[{\"name\":\"a\",\"exec\":\"x\"}]", &cfg) < 0);   /* unclosed */
+	CHECK(parse_json("{\"services\":[]} x", &cfg) < 0);                       /* trailing data */
+	CHECK(parse_json("{\"servics\":[]}", &cfg) < 0);
+	CHECK(parse_json("{\"services\":[{\"name\":\"a\",\"exec\":\"x\",\"depends\":[[\"b\"]]}]}", &cfg) < 0);
+	CHECK(parse_json("{\"services\":[{\"name\":\"a\",\"exec\":\"\\u00e9\"}]}", &cfg) < 0);
+	CHECK(parse_json("{\"services\":[{\"name\":\"a\",\"exec\":\"x\",\"restart\":null}]}", &cfg) < 0);
+	CHECK(parse_json("{\"services\":[{\"name\":\"a\",\"exec\":\"x\"},{\"name\":\"a\",\"exec\":\"y\"}]}", &cfg) < 0);
+	CHECK(parse_json("", &cfg) < 0);
+}
+#endif
+
 int main(void)
 {
 	/* the error cases print parse errors; keep them out of the test output */
@@ -185,6 +267,11 @@ int main(void)
 	test_config_values();
 	test_config_errors();
 	test_deps();
+#ifdef MINIT_JSON
+	test_json_matches_conf();
+	test_json_values();
+	test_json_errors();
+#endif
 
 	printf("%d/%d unit checks passed\n", checks - failures, checks);
 	return failures != 0;

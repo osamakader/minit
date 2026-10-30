@@ -39,6 +39,14 @@ has "respawn_max gives up" "gave up after 2" "$o"
 o=$(run "$(conf miss '[service m]\nexec = no-such-binary\nrestart = never\n')" 0.5)
 has "exec failures are reported" "cannot exec no-such-binary: No such file" "$o"
 
+printf '{"services": [\n  {"name": "j", "exec": ["sh", "-c", "echo json: $0", "it'"'"'s"], "restart": "never"}\n]}\n' > "$T/j.json"
+if $M --check "$T/j.json" 2>&1 | grep -q "not compiled in"; then
+	echo "skip JSON config (built with JSON=0)"
+else
+	o=$(run "$T/j.json" 0.5)
+	has "JSON config with an exec array" "json: it's" "$o"
+fi
+
 o=$($M "$(conf bad '[service a]\nexec = /bin/true\ncolour = x\n')" 2>&1)
 has "config errors name file and line" "bad.conf:3: unknown key" "$o"
 

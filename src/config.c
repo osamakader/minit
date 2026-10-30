@@ -1,4 +1,4 @@
-#include "minit.h"
+#include "config_internal.h"
 #include <ctype.h>
 #include <errno.h>
 #include <stdarg.h>
@@ -29,7 +29,7 @@ static void trim(char *s)
 	*p = '\0';
 }
 
-static void parse_error(const char *path, int lineno, const char *fmt, ...)
+void config_error(const char *path, int lineno, const char *fmt, ...)
 {
 	va_list ap;
 	fprintf(stderr, "minit: %s:%d: ", path, lineno);
@@ -135,29 +135,29 @@ static int service_exists(const config_t *cfg, const char *name)
 }
 
 /* One key of the [system] section. Returns the number of errors (0 or 1). */
-static int parse_system_key(const char *path, int lineno, config_t *cfg,
-			    const char *key, const char *val)
+int config_system_key(const char *path, int lineno, config_t *cfg,
+		      const char *key, const char *val)
 {
 	if (strcmp(key, "watchdog") == 0) {
 		if (val[0] != '/' || copy_value(cfg->watchdog, MINIT_EXEC_LEN, val) < 0) {
-			parse_error(path, lineno, "watchdog must be an absolute path");
+			config_error(path, lineno, "watchdog must be an absolute path");
 			return 1;
 		}
 	} else if (strcmp(key, "watchdog_timeout") == 0) {
 		if (parse_int(val, 1, 600, &cfg->watchdog_timeout) < 0) {
-			parse_error(path, lineno, "watchdog_timeout must be 1..600 (seconds)");
+			config_error(path, lineno, "watchdog_timeout must be 1..600 (seconds)");
 			return 1;
 		}
 	} else {
-		parse_error(path, lineno, "unknown [system] key '%s'", key);
+		config_error(path, lineno, "unknown [system] key '%s'", key);
 		return 1;
 	}
 	return 0;
 }
 
 /* One key of a service. Returns the number of errors (0 or 1). */
-static int parse_service_key(const char *path, int lineno, service_t *cur,
-			     const char *key, const char *val)
+int config_service_key(const char *path, int lineno, service_t *cur,
+		       const char *key, const char *val)
 {
 	const char *err;
 	int r;
@@ -166,16 +166,16 @@ static int parse_service_key(const char *path, int lineno, service_t *cur,
 		char buf[MINIT_EXEC_LEN];
 		char *argv[MINIT_MAX_ARGS + 1];
 		if (copy_value(cur->exec, MINIT_EXEC_LEN, val) < 0) {
-			parse_error(path, lineno, "exec too long (max %d)", MINIT_EXEC_LEN - 1);
+			config_error(path, lineno, "exec too long (max %d)", MINIT_EXEC_LEN - 1);
 			return 1;
 		} else if (exec_split(val, buf, sizeof(buf), argv) <= 0) {
-			parse_error(path, lineno, "exec is empty or has an unterminated quote");
+			config_error(path, lineno, "exec is empty or has an unterminated quote");
 			return 1;
 		}
 	} else if (strcmp(key, "restart") == 0) {
 		r = parse_restart(val);
 		if (r < 0) {
-			parse_error(path, lineno, "restart must be always, on-failure or never");
+			config_error(path, lineno, "restart must be always, on-failure or never");
 			return 1;
 		} else {
 			cur->restart = r;
@@ -186,17 +186,17 @@ static int parse_service_key(const char *path, int lineno, service_t *cur,
 		} else if (strcmp(val, "oneshot") == 0) {
 			cur->oneshot = 1;
 		} else {
-			parse_error(path, lineno, "type must be simple or oneshot");
+			config_error(path, lineno, "type must be simple or oneshot");
 			return 1;
 		}
 	} else if (strcmp(key, "ready_fd") == 0) {
 		if (parse_int(val, 3, 63, &cur->ready_fd) < 0) {
-			parse_error(path, lineno, "ready_fd must be 3..63");
+			config_error(path, lineno, "ready_fd must be 3..63");
 			return 1;
 		}
 	} else if (strcmp(key, "ready_file") == 0) {
 		if (val[0] != '/' || copy_value(cur->ready_file, MINIT_EXEC_LEN, val) < 0) {
-			parse_error(path, lineno, "ready_file must be an absolute path");
+			config_error(path, lineno, "ready_file must be an absolute path");
 			return 1;
 		}
 	} else if (strcmp(key, "log") == 0) {
@@ -209,17 +209,17 @@ static int parse_service_key(const char *path, int lineno, service_t *cur,
 		} else if (strcmp(val, "kmsg") == 0) {
 			cur->log = LOG_KMSG;
 		} else {
-			parse_error(path, lineno, "log must be console, null, file or kmsg");
+			config_error(path, lineno, "log must be console, null, file or kmsg");
 			return 1;
 		}
 	} else if (strcmp(key, "log_size") == 0) {
 		if (parse_int(val, 4, 65536, &cur->log_size_kb) < 0) {
-			parse_error(path, lineno, "log_size must be 4..65536 (KB)");
+			config_error(path, lineno, "log_size must be 4..65536 (KB)");
 			return 1;
 		}
 	} else if (strcmp(key, "ready_timeout") == 0) {
 		if (parse_int(val, 1, 3600, &cur->ready_timeout) < 0) {
-			parse_error(path, lineno, "ready_timeout must be 1..3600 (seconds)");
+			config_error(path, lineno, "ready_timeout must be 1..3600 (seconds)");
 			return 1;
 		}
 	} else if (strcmp(key, "critical") == 0) {
@@ -228,107 +228,107 @@ static int parse_service_key(const char *path, int lineno, service_t *cur,
 		} else if (strcmp(val, "no") == 0) {
 			cur->critical = 0;
 		} else {
-			parse_error(path, lineno, "critical must be yes or no");
+			config_error(path, lineno, "critical must be yes or no");
 			return 1;
 		}
 	} else if (strcmp(key, "user") == 0 || strcmp(key, "group") == 0) {
 		if (!valid_id(val)) {
-			parse_error(path, lineno, "%s must be a name or a number", key);
+			config_error(path, lineno, "%s must be a name or a number", key);
 			return 1;
 		} else {
 			strcpy(key[0] == 'u' ? cur->user : cur->group, val);
 		}
 	} else if (strcmp(key, "workdir") == 0) {
 		if (val[0] != '/' || copy_value(cur->workdir, MINIT_EXEC_LEN, val) < 0) {
-			parse_error(path, lineno, "workdir must be an absolute path");
+			config_error(path, lineno, "workdir must be an absolute path");
 			return 1;
 		}
 	} else if (strcmp(key, "umask") == 0) {
 		if (parse_int_base(val, 8, 0, 0777, &cur->umask) < 0) {
-			parse_error(path, lineno, "umask must be octal, 0..0777");
+			config_error(path, lineno, "umask must be octal, 0..0777");
 			return 1;
 		}
 	} else if (strcmp(key, "nice") == 0) {
 		if (parse_int(val, -20, 19, &cur->nice) < 0) {
-			parse_error(path, lineno, "nice must be -20..19");
+			config_error(path, lineno, "nice must be -20..19");
 			return 1;
 		}
 		cur->set_nice = 1;
 	} else if (strcmp(key, "env") == 0) {
 		if (!config_valid_env(val)) {
-			parse_error(path, lineno, "env must be KEY=VALUE");
+			config_error(path, lineno, "env must be KEY=VALUE");
 			return 1;
 		} else if (cur->nenv >= MINIT_MAX_ENV) {
-			parse_error(path, lineno, "too many env lines (max %d)", MINIT_MAX_ENV);
+			config_error(path, lineno, "too many env lines (max %d)", MINIT_MAX_ENV);
 			return 1;
 		} else if (copy_value(cur->env[cur->nenv], MINIT_ENV_LEN, val) < 0) {
-			parse_error(path, lineno, "env too long (max %d)", MINIT_ENV_LEN - 1);
+			config_error(path, lineno, "env too long (max %d)", MINIT_ENV_LEN - 1);
 			return 1;
 		} else {
 			cur->nenv++;
 		}
 	} else if (strcmp(key, "env_file") == 0) {
 		if (val[0] != '/' || copy_value(cur->env_file, MINIT_EXEC_LEN, val) < 0) {
-			parse_error(path, lineno, "env_file must be an absolute path");
+			config_error(path, lineno, "env_file must be an absolute path");
 			return 1;
 		}
 	} else if (strcmp(key, "depends") == 0) {
 		err = parse_names(val, cur->depends, MINIT_MAX_DEPS, &cur->ndeps);
 		if (err) {
-			parse_error(path, lineno, "depends: %s (max %d)", err, MINIT_MAX_DEPS);
+			config_error(path, lineno, "depends: %s (max %d)", err, MINIT_MAX_DEPS);
 			return 1;
 		}
 	} else if (strcmp(key, "provides") == 0) {
 		err = parse_names(val, cur->provides, MINIT_MAX_PROVIDES, &cur->nprovides);
 		if (err) {
-			parse_error(path, lineno, "provides: %s (max %d)", err, MINIT_MAX_PROVIDES);
+			config_error(path, lineno, "provides: %s (max %d)", err, MINIT_MAX_PROVIDES);
 			return 1;
 		}
 	} else if (strcmp(key, "respawn_delay") == 0) {
 		if (parse_int(val, 1, 60, &cur->respawn_delay) < 0) {
-			parse_error(path, lineno, "respawn_delay must be 1..60");
+			config_error(path, lineno, "respawn_delay must be 1..60");
 			return 1;
 		}
 	} else if (strcmp(key, "respawn_max") == 0) {
 		if (parse_int(val, 0, 1000000, &cur->respawn_max) < 0) {
-			parse_error(path, lineno, "respawn_max must be a number >= 0");
+			config_error(path, lineno, "respawn_max must be a number >= 0");
 			return 1;
 		}
 	} else if (strcmp(key, "respawn_window") == 0) {
 		if (parse_int(val, 1, 86400, &cur->respawn_window) < 0) {
-			parse_error(path, lineno, "respawn_window must be 1..86400");
+			config_error(path, lineno, "respawn_window must be 1..86400");
 			return 1;
 		}
 	} else {
-		parse_error(path, lineno, "unknown key '%s'", key);
+		config_error(path, lineno, "unknown key '%s'", key);
 		return 1;
 	}
 	return 0;
 }
 
 /* Start a new service called name. Returns NULL (after reporting why) if it cannot be added. */
-static service_t *add_service(const char *path, int lineno, config_t *cfg, const char *name)
+service_t *config_add_service(const char *path, int lineno, config_t *cfg, const char *name)
 {
 	service_t *svc;
 
 	if (!*name) {
-		parse_error(path, lineno, "service has no name");
+		config_error(path, lineno, "service has no name");
 		return NULL;
 	}
 	if (cfg->nservices >= MINIT_MAX_SERVICES) {
-		parse_error(path, lineno, "too many services (max %d)", MINIT_MAX_SERVICES);
+		config_error(path, lineno, "too many services (max %d)", MINIT_MAX_SERVICES);
 		return NULL;
 	}
 	if (strlen(name) >= MINIT_NAME_LEN) {
-		parse_error(path, lineno, "service name too long");
+		config_error(path, lineno, "service name too long");
 		return NULL;
 	}
 	if (!valid_name(name)) {
-		parse_error(path, lineno, "service name may only use A-Z a-z 0-9 . _ -");
+		config_error(path, lineno, "service name may only use A-Z a-z 0-9 . _ -");
 		return NULL;
 	}
 	if (service_exists(cfg, name)) {
-		parse_error(path, lineno, "duplicate service '%s'", name);
+		config_error(path, lineno, "duplicate service '%s'", name);
 		return NULL;
 	}
 	svc = &cfg->services[cfg->nservices++];
@@ -338,7 +338,7 @@ static service_t *add_service(const char *path, int lineno, config_t *cfg, const
 }
 
 /* Checks that need the whole service. Returns the number of errors. */
-static int check_services(const char *path, const config_t *cfg)
+int config_check_services(const char *path, const config_t *cfg)
 {
 	int i, errors = 0;
 
@@ -382,13 +382,31 @@ int config_parse(const char *path, config_t *cfg)
 	if (!f)
 		return -1;
 
+	/* JSON if the name ends in .json or the first non-blank character is '{' */
+	{
+		size_t n = strlen(path);
+		int c;
+		while ((c = fgetc(f)) != EOF && isspace(c))
+			;
+		if (c == '{' || (n > 5 && strcmp(path + n - 5, ".json") == 0)) {
+			fclose(f);
+#ifdef MINIT_JSON
+			return config_parse_json(path, cfg);
+#else
+			fprintf(stderr, "minit: %s: JSON support is not compiled in\n", path);
+			return -1;
+#endif
+		}
+		rewind(f);
+	}
+
 	while (fgets(line, sizeof(line), f)) {
 		char *eq, *key, *val;
 
 		lineno++;
 		if (!strchr(line, '\n') && !feof(f)) {
 			int c;
-			parse_error(path, lineno, "line too long (max %d)", CONFIG_LINE_LEN - 2);
+			config_error(path, lineno, "line too long (max %d)", CONFIG_LINE_LEN - 2);
 			errors++;
 			while ((c = fgetc(f)) != EOF && c != '\n')
 				;
@@ -409,7 +427,7 @@ int config_parse(const char *path, config_t *cfg)
 			in_system = 0;
 			if (strcmp(line, "[system]") == 0) {
 				if (seen_system) {
-					parse_error(path, lineno, "duplicate [system] section");
+					config_error(path, lineno, "duplicate [system] section");
 					errors++;
 					continue;
 				}
@@ -418,14 +436,14 @@ int config_parse(const char *path, config_t *cfg)
 				continue;
 			}
 			if (!end || end[1] || strncmp(line, "[service ", 9) != 0) {
-				parse_error(path, lineno, "expected [system] or [service <name>]");
+				config_error(path, lineno, "expected [system] or [service <name>]");
 				errors++;
 				continue;
 			}
 			key = line + 9;
 			*end = '\0';
 			trim(key);
-			cur = add_service(path, lineno, cfg, key);
+			cur = config_add_service(path, lineno, cfg, key);
 			if (!cur) {
 				errors++;
 				continue;
@@ -436,13 +454,13 @@ int config_parse(const char *path, config_t *cfg)
 
 		eq = strchr(line, '=');
 		if (!eq) {
-			parse_error(path, lineno, "expected key = value");
+			config_error(path, lineno, "expected key = value");
 			errors++;
 			continue;
 		}
 		if (!cur && !in_system) {
 			if (!bad_section) {
-				parse_error(path, lineno, "key outside a [service] section");
+				config_error(path, lineno, "key outside a [service] section");
 				errors++;
 			}
 			continue;
@@ -455,15 +473,15 @@ int config_parse(const char *path, config_t *cfg)
 		trim(val);
 
 		if (in_system) {
-			errors += parse_system_key(path, lineno, cfg, key, val);
+			errors += config_system_key(path, lineno, cfg, key, val);
 			continue;
 		}
 
-		errors += parse_service_key(path, lineno, cur, key, val);
+		errors += config_service_key(path, lineno, cur, key, val);
 	}
 
 	fclose(f);
 
-	errors += check_services(path, cfg);
+	errors += config_check_services(path, cfg);
 	return errors ? -1 : 0;
 }
