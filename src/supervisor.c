@@ -156,10 +156,46 @@ struct child_ids {
 };
 
 /* Steps of the child setup, reported back with errno when one fails. */
-enum { STEP_EXEC, STEP_SETGROUPS, STEP_SETGID, STEP_SETUID, STEP_NICE, STEP_CHDIR };
+enum { STEP_EXEC, STEP_SETGROUPS, STEP_SETGID, STEP_SETUID, STEP_NICE, STEP_CHDIR, STEP_ENV };
 static const char *const step_names[] = {
-	"exec", "setgroups", "setgid", "setuid", "nice", "chdir"
+	"exec", "setgroups", "setgid", "setuid", "nice", "chdir", "env_file"
 };
+
+/* putenv() keeps the pointer, so give it a copy (the child execs soon after) */
+static int put_env(const char *kv)
+{
+	char *copy = strdup(kv);
+	return copy ? putenv(copy) : -1;
+}
+
+/* In the child: env_file first, then env lines, which win. Returns 0, or -1 with errno. */
+static int apply_env(const service_t *svc)
+{
+	char line[CONFIG_LINE_LEN];
+	FILE *f;
+	int i;
+
+	if (svc->env_file[0]) {
+		f = fopen(svc->env_file, "r");
+		if (!f)
+			return -1;
+		while (fgets(line, sizeof(line), f)) {
+			line[strcspn(line, "\r\n")] = '\0';
+			if (!line[0] || line[0] == '#')
+				continue;
+			if (!config_valid_env(line)) {
+				fclose(f);
+				errno = EINVAL;
+				return -1;
+			}
+			put_env(line);
+		}
+		fclose(f);
+	}
+	for (i = 0; i < svc->nenv; i++)
+		put_env(svc->env[i]);
+	return 0;
+}
 
 static int numeric_id(const char *v, unsigned long *out)
 {
@@ -299,6 +335,8 @@ static int spawn(supervisor_t *s, int idx)
 			err[0] = apply_ids(&ids);
 		if (err[0] < 0 && svc->workdir[0] && chdir(svc->workdir) < 0)
 			err[0] = STEP_CHDIR;
+		if (err[0] < 0 && apply_env(svc) < 0)
+			err[0] = STEP_ENV;
 		if (err[0] < 0) {
 			/* searches PATH when argv[0] has no slash (default PATH if unset) */
 			execvp(argv[0], argv);

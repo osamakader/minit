@@ -87,6 +87,7 @@ static void test_config_values(void)
 		    "depends = b\nrespawn_delay = 5\nrespawn_max = 3\nrespawn_window = 30\n"
 		    "log = file\nlog_size = 64\nready_fd = 4\nready_timeout = 9\ncritical = yes\n"
 		    "user = www\ngroup = 33\nworkdir = /srv\numask = 027\nnice = -3\n"
+		    "env = A=1\nenv = B=two words\nenv_file = /etc/a.env\n"
 		    "[service b]\ntype = oneshot\nexec = y\n", &cfg) == 0);
 	CHECK(strcmp(cfg.watchdog, "/dev/watchdog") == 0 && cfg.watchdog_timeout == 15);
 	s = &cfg.services[0];
@@ -99,6 +100,9 @@ static void test_config_values(void)
 	CHECK(strcmp(s->user, "www") == 0 && strcmp(s->group, "33") == 0);
 	CHECK(strcmp(s->workdir, "/srv") == 0 && s->umask == 027 && s->set_nice && s->nice == -3);
 	CHECK(cfg.services[1].umask == -1 && !cfg.services[1].set_nice);
+	CHECK(s->nenv == 2 && strcmp(s->env[1], "B=two words") == 0);
+	CHECK(strcmp(s->env_file, "/etc/a.env") == 0);
+	CHECK(config_valid_env("_X1=") && !config_valid_env("1X=a") && !config_valid_env("X"));
 	CHECK(cfg.services[1].oneshot);
 }
 
@@ -125,6 +129,7 @@ static void test_config_errors(void)
 	CHECK(parse("[service a]\nexec = x\nuser = a b\n", &cfg) < 0);
 	CHECK(parse("[service a]\nexec = x\numask = 8\n", &cfg) < 0);
 	CHECK(parse("[service a]\nexec = x\nnice = -21\n", &cfg) < 0);
+	CHECK(parse("[service a]\nexec = x\nenv = NOVALUE\n", &cfg) < 0);
 	snprintf(big, sizeof(big), "[service a]\nexec = %0600d\n", 0);
 	CHECK(parse(big, &cfg) < 0);                                /* line too long */
 }

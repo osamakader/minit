@@ -48,6 +48,13 @@ has "--check prints the start order" "OK, 2 services; start order: a b" "$o"
 o=$($M "$(conf cyc '[service a]\nexec=/bin/true\ndepends=b\n[service b]\nexec=/bin/true\ndepends=a\n')" 2>&1)
 has "dependency cycles are rejected" "cycle among: a b" "$o"
 
+printf 'FROM_FILE=yes\nLEVEL=1\n' > "$T/app.env"
+o=$(run "$(conf env '[service e]\nenv_file = '"$T"'/app.env\nenv = LEVEL=2\nrestart = never\nexec = sh -c "echo env:$FROM_FILE:$LEVEL"\n')" 0.5)
+has "env_file and env (env wins)" "env:yes:2" "$o"
+
+o=$(run "$(conf wd '[service w]\nworkdir = /\numask = 077\nrestart = never\nexec = sh -c "echo wd:$(pwd):$(umask)"\n')" 0.5)
+has "workdir and umask" "wd:/:0077" "$o"
+
 run "$(conf log '[service lg]\nlog = file\nexec = sh -c "echo to-file; exec '"$SLEEP"'"\n')" 0.5 >/dev/null
 has "log = file" "to-file" "$(cat "$T/log/lg.log" 2>&1)"
 

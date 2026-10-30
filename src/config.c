@@ -113,6 +113,17 @@ static int valid_id(const char *v)
 	return v[0] && strlen(v) < MINIT_ID_LEN && valid_name(v);
 }
 
+/* KEY=VALUE with KEY matching [A-Za-z_][A-Za-z0-9_]* */
+int config_valid_env(const char *v)
+{
+	const char *p = v;
+	if (!isalpha((unsigned char)*p) && *p != '_')
+		return 0;
+	while (isalnum((unsigned char)*p) || *p == '_')
+		p++;
+	return *p == '=';
+}
+
 static int service_exists(const config_t *cfg, const char *name)
 {
 	int i;
@@ -352,6 +363,24 @@ int config_parse(const char *path, config_t *cfg)
 				errors++;
 			}
 			cur->set_nice = 1;
+		} else if (strcmp(key, "env") == 0) {
+			if (!config_valid_env(val)) {
+				parse_error(path, lineno, "env must be KEY=VALUE");
+				errors++;
+			} else if (cur->nenv >= MINIT_MAX_ENV) {
+				parse_error(path, lineno, "too many env lines (max %d)", MINIT_MAX_ENV);
+				errors++;
+			} else if (copy_value(cur->env[cur->nenv], MINIT_ENV_LEN, val) < 0) {
+				parse_error(path, lineno, "env too long (max %d)", MINIT_ENV_LEN - 1);
+				errors++;
+			} else {
+				cur->nenv++;
+			}
+		} else if (strcmp(key, "env_file") == 0) {
+			if (val[0] != '/' || copy_value(cur->env_file, MINIT_EXEC_LEN, val) < 0) {
+				parse_error(path, lineno, "env_file must be an absolute path");
+				errors++;
+			}
 		} else if (strcmp(key, "depends") == 0) {
 			err = parse_names(val, cur->depends, MINIT_MAX_DEPS, &cur->ndeps);
 			if (err) {

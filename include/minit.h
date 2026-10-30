@@ -14,6 +14,8 @@
 #define MINIT_PROVIDES_LEN  64
 #define CONFIG_LINE_LEN     512
 #define MINIT_ID_LEN        32   /* user and group names */
+#define MINIT_MAX_ENV       8
+#define MINIT_ENV_LEN       128  /* one KEY=VALUE */
 
 typedef enum {
 	RESTART_NEVER,
@@ -52,6 +54,9 @@ typedef struct {
 	int umask;           /* -1 = inherit minit's */
 	int nice;            /* -20..19, applied when set_nice */
 	int set_nice;
+	char env[MINIT_MAX_ENV][MINIT_ENV_LEN];  /* KEY=VALUE, set after env_file */
+	int nenv;
+	char env_file[MINIT_EXEC_LEN];  /* KEY=VALUE lines read at each start */
 	log_mode_t log;      /* where stdout/stderr go */
 	int log_size_kb;     /* log = file: rotate at this size */
 	/* the service name is always provided too, without being listed here */
@@ -74,6 +79,7 @@ typedef struct {
 
 /* config.c */
 int config_parse(const char *path, config_t *cfg);
+int config_valid_env(const char *v);  /* KEY=VALUE with a valid variable name */
 
 /* deps.c */
 int deps_resolve(config_t *cfg, int order[MINIT_MAX_SERVICES]);
