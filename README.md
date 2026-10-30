@@ -4,7 +4,7 @@ Minimal PID1 replacement for embedded systems. A middle ground between BusyBox i
 
 ## Features
 
-- **Simple conf format** — INI-style `[service name]` sections (JSON support is planned; `examples/minit.json.example` shows the intended format)
+- **Two config formats** — INI-style `[service name]` sections or JSON (optional at build time); `minit --check` validates either
 - **Service supervision** — track and respawn processes
 - **Restart policies** — `always`, `on-failure`, `never`
 - **Auto-restart with backoff** — exponential backoff to avoid restart storms
@@ -19,7 +19,8 @@ Minimal PID1 replacement for embedded systems. A middle ground between BusyBox i
 - **Control** — `minitctl status | start | stop | restart | reload | reboot | poweroff | halt`
 - **Config reload** — SIGHUP or `minitctl reload` applies only what changed
 - **Hardware watchdog** — kept alive by minit; `critical` services reboot the board when they fail for good
-- **Minimal footprint** — about 110KB for minit and 35KB for minitctl as static musl binaries (budget: 500KB)
+- **Process settings** — per-service user/group, working directory, umask, nice level and environment
+- **Minimal footprint** — about 130KB for minit and 35KB for minitctl as static musl binaries built with `-Os` (budget: 500KB)
 
 ## Build
 
@@ -27,14 +28,18 @@ Minimal PID1 replacement for embedded systems. A middle ground between BusyBox i
 make                       # dynamic ./minit and ./minitctl
 make static CC=musl-gcc    # stripped static ./minit-static and ./minitctl-static for the target rootfs
 make size CC=musl-gcc      # report the static binary sizes
+make test                  # unit tests and behaviour tests (no root needed)
+make JSON=0                # leave out the JSON config parser
 ```
 
 ## Usage
 
 ```sh
-./minit [config]
-# Default config: /etc/minit.conf or MINIT_CONFIG env
+./minit [config]           # default: /etc/minit.conf, or MINIT_CONFIG
+./minit --check [config]   # validate it and print the start order; exit 1 on errors
 ```
+
+`MINIT_LOG_DIR` overrides the log directory and `MINIT_SOCKET` the control socket path.
 
 ## Configuration
 
@@ -67,6 +72,13 @@ Service names may use `A-Z a-z 0-9 . _ -`. Keys per `[service name]` section:
 | `respawn_window` | `60` | A run longer than this many seconds resets the restart count. |
 | `log` | `console` | `console`, `null`, `file` (`<log dir>/<name>.log`) or `kmsg` (one kernel log record per line). |
 | `log_size` | `256` | `log = file`: rotate to `<name>.log.1` at this many KB. |
+| `user` | minit's | Name or uid to run as. A named user also gets its supplementary groups. Resolved at each start; unknown users mark the service failed. |
+| `group` | user's primary | Name or gid. |
+| `workdir` | minit's | Absolute directory to start in (entered after switching user). |
+| `umask` | minit's | Octal file mode mask, e.g. `027`. |
+| `nice` | `0` | Niceness, -20..19. |
+| `env` | — | `KEY=VALUE`; repeat for more (up to 8). Overrides `env_file`. |
+| `env_file` | — | Absolute path of a file with `KEY=VALUE` lines (`#` comments allowed), read at each start. |
 
 Without `type = oneshot`, `ready_fd` or `ready_file`, a service is ready as soon as it is started.
 Use at most one of the three. The boot report is written once every service is ready (or can never
@@ -80,6 +92,26 @@ An optional `[system]` section holds settings for minit itself:
 |-----|---------|-------------|
 | `watchdog` | — | Watchdog device, e.g. `/dev/watchdog`. minit pings it at half its timeout. It is disarmed (magic close) on poweroff, halt or when minit exits outside PID 1, and left armed on reboot. |
 | `watchdog_timeout` | driver default | Seconds (1–600) to program into the watchdog. |
+
+### JSON
+
+A file ending in `.json`, or starting with `{`, is read as JSON with the same keys (see
+`examples/minit.json.example`):
+
+```json
+{
+  "system": { "watchdog": "/dev/watchdog" },
+  "services": [
+    { "name": "network", "type": "oneshot", "exec": "/etc/minit/network.sh" },
+    { "name": "httpd", "exec": ["/usr/sbin/lighttpd", "-D", "-f", "/etc/lighttpd.conf"],
+      "depends": ["network"], "env": { "LANG": "C" }, "critical": true }
+  ]
+}
+```
+
+`exec` may be a string (quoted like in the conf format) or an array of arguments; `depends`,
+`provides` and `env` may be arrays; `env` may also be an object; `true`/`false` stand for
+`yes`/`no`. Files are limited to 64KB and only ASCII `\u` escapes are accepted.
 
 ## Control
 

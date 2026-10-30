@@ -44,4 +44,4 @@ jobs:
           test "$total" -le 512000
       - name: Example configs are valid
         run: |
-          for f in examples/*.conf examples/*.conf.example; do ./minit-static --check "$f"; done
+          for f in examples/*.conf examples/*.example; do ./minit-static --check "$f"; done

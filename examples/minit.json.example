@@ -7,20 +7,28 @@
       "provides": "syslog"
     },
     {
+      "name": "klogd",
+      "exec": "/sbin/klogd -n",
+      "restart": "always",
+      "depends": ["syslogd"]
+    },
+    {
       "name": "network",
+      "type": "oneshot",
       "exec": "/etc/minit/network.sh",
-      "restart": "on-failure",
       "depends": ["syslog"],
-      "provides": "network"
+      "provides": ["network"]
     },
     {
       "name": "httpd",
-      "exec": "/usr/sbin/lighttpd -f /etc/lighttpd.conf",
-      "restart": "on-failure",
+      "exec": ["/usr/sbin/lighttpd", "-D", "-f", "/etc/lighttpd.conf"],
       "depends": ["network"],
+      "user": "www-data",
       "respawn_delay": 2,
       "respawn_max": 5,
-      "respawn_window": 60
+      "respawn_window": 60,
+      "log": "file",
+      "log_size": 512
     }
   ]
 }
