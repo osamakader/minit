@@ -74,7 +74,7 @@ int deps_provides(const service_t *svc, const char *name);  /* its name or a pro
 int deps_find_provider(const config_t *cfg, const char *name);  /* service index or -1 */
 
 /* log.c */
-int log_init(const char *dir);  /* NULL = use default, try /var/log/minit then /tmp/minit */
+int log_init(const char *dir);  /* NULL = try /var/log/minit, then /tmp/minit */
 void log_crash(const char *name, pid_t pid, int exit_code, int signal, int restarts);
 void log_giveup(const char *name, int restarts);
 void log_boot(int boot_ms, int total, int ready);

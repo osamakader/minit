@@ -141,7 +141,7 @@ int main(int argc, char **argv)
 		return fail();
 	}
 
-	if (log_init(NULL) < 0) {
+	if (log_init(getenv("MINIT_LOG_DIR")) < 0) {
 		fprintf(stderr, "minit: cannot init log\n");
 		return fail();
 	}

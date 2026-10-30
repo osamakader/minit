@@ -8,14 +8,12 @@
 
 #define LOG_DIR   "/var/log/minit"
 #define LOG_DIR_ALT "/tmp/minit"
-#define CRASH_LOG "/var/log/minit/crashes.log"
-#define CRASH_LOG_ALT "/tmp/minit/crashes.log"
 #define BOOT_FILE "/var/run/minit.boot"
 #define BOOT_FILE_RUN "/run/minit.boot"   /* /var/run is often missing on minimal rootfs */
 #define BOOT_FILE_ALT "/tmp/minit.boot"
 
 static int crash_fd = -1;
-static const char *dir_used = LOG_DIR;
+static char dir_used[200] = LOG_DIR;
 
 static void mkdir_p(const char *path)
 {
@@ -33,17 +31,27 @@ static void mkdir_p(const char *path)
 	mkdir(buf, 0755);
 }
 
+/* Use dir for the crash log and service logs; returns 0 if the crash log opened. */
+static int try_dir(const char *dir)
+{
+	char path[256];
+
+	mkdir_p(dir);
+	snprintf(path, sizeof(path), "%s/crashes.log", dir);
+	crash_fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+	if (crash_fd < 0)
+		return -1;
+	snprintf(dir_used, sizeof(dir_used), "%s", dir);
+	return 0;
+}
+
 int log_init(const char *dir)
 {
-	(void)dir;
-	mkdir_p(LOG_DIR);
-	crash_fd = open(CRASH_LOG, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
-	if (crash_fd < 0) {
-		mkdir_p(LOG_DIR_ALT);
-		dir_used = LOG_DIR_ALT;
-		crash_fd = open(CRASH_LOG_ALT, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
-	}
-	return (crash_fd >= 0) ? 0 : -1;
+	if (dir && dir[0])
+		return try_dir(dir);
+	if (try_dir(LOG_DIR) == 0)
+		return 0;
+	return try_dir(LOG_DIR_ALT);
 }
 
 const char *log_dir(void)
