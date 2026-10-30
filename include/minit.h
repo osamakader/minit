@@ -48,6 +48,10 @@ typedef struct {
 	int critical;        /* reboot if it fails for good */
 	char user[MINIT_ID_LEN];   /* name or uid to run as; empty = minit's */
 	char group[MINIT_ID_LEN];  /* name or gid; empty = the user's primary group */
+	char workdir[MINIT_EXEC_LEN];  /* chdir here before exec; empty = minit's */
+	int umask;           /* -1 = inherit minit's */
+	int nice;            /* -20..19, applied when set_nice */
+	int set_nice;
 	log_mode_t log;      /* where stdout/stderr go */
 	int log_size_kb;     /* log = file: rotate at this size */
 	/* the service name is always provided too, without being listed here */

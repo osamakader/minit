@@ -13,6 +13,7 @@ static void service_defaults(service_t *svc)
 	svc->respawn_delay = 1;
 	svc->respawn_max = 0;
 	svc->respawn_window = 60;
+	svc->umask = -1;
 	svc->log = LOG_CONSOLE;
 	svc->log_size_kb = 256;
 }
@@ -38,17 +39,22 @@ static void parse_error(const char *path, int lineno, const char *fmt, ...)
 	fputc('\n', stderr);
 }
 
-/* Strict decimal parse into [min, max]. Returns 0 on success. */
-static int parse_int(const char *v, int min, int max, int *out)
+/* Strict parse in the given base into [min, max]. Returns 0 on success. */
+static int parse_int_base(const char *v, int base, int min, int max, int *out)
 {
 	char *end;
 	long n;
 	errno = 0;
-	n = strtol(v, &end, 10);
+	n = strtol(v, &end, base);
 	if (errno || end == v || *end || n < min || n > max)
 		return -1;
 	*out = (int)n;
 	return 0;
+}
+
+static int parse_int(const char *v, int min, int max, int *out)
+{
+	return parse_int_base(v, 10, min, max, out);
 }
 
 static int parse_restart(const char *v)
@@ -330,6 +336,22 @@ int config_parse(const char *path, config_t *cfg)
 			} else {
 				strcpy(key[0] == 'u' ? cur->user : cur->group, val);
 			}
+		} else if (strcmp(key, "workdir") == 0) {
+			if (val[0] != '/' || copy_value(cur->workdir, MINIT_EXEC_LEN, val) < 0) {
+				parse_error(path, lineno, "workdir must be an absolute path");
+				errors++;
+			}
+		} else if (strcmp(key, "umask") == 0) {
+			if (parse_int_base(val, 8, 0, 0777, &cur->umask) < 0) {
+				parse_error(path, lineno, "umask must be octal, 0..0777");
+				errors++;
+			}
+		} else if (strcmp(key, "nice") == 0) {
+			if (parse_int(val, -20, 19, &cur->nice) < 0) {
+				parse_error(path, lineno, "nice must be -20..19");
+				errors++;
+			}
+			cur->set_nice = 1;
 		} else if (strcmp(key, "depends") == 0) {
 			err = parse_names(val, cur->depends, MINIT_MAX_DEPS, &cur->ndeps);
 			if (err) {

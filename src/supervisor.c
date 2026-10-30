@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -154,8 +156,10 @@ struct child_ids {
 };
 
 /* Steps of the child setup, reported back with errno when one fails. */
-enum { STEP_EXEC, STEP_SETGROUPS, STEP_SETGID, STEP_SETUID };
-static const char *const step_names[] = { "exec", "setgroups", "setgid", "setuid" };
+enum { STEP_EXEC, STEP_SETGROUPS, STEP_SETGID, STEP_SETUID, STEP_NICE, STEP_CHDIR };
+static const char *const step_names[] = {
+	"exec", "setgroups", "setgid", "setuid", "nice", "chdir"
+};
 
 static int numeric_id(const char *v, unsigned long *out)
 {
@@ -285,7 +289,16 @@ static int spawn(supervisor_t *s, int idx)
 			else
 				dup2(notify[1], svc->ready_fd);
 		}
-		err[0] = apply_ids(&ids);
+		/* nice before dropping privileges (raising priority needs root), chdir after */
+		if (svc->umask >= 0)
+			umask((mode_t)svc->umask);
+		err[0] = -1;
+		if (svc->set_nice && setpriority(PRIO_PROCESS, 0, svc->nice) < 0)
+			err[0] = STEP_NICE;
+		if (err[0] < 0)
+			err[0] = apply_ids(&ids);
+		if (err[0] < 0 && svc->workdir[0] && chdir(svc->workdir) < 0)
+			err[0] = STEP_CHDIR;
 		if (err[0] < 0) {
 			/* searches PATH when argv[0] has no slash (default PATH if unset) */
 			execvp(argv[0], argv);

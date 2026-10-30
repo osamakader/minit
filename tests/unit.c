@@ -86,7 +86,7 @@ static void test_config_values(void)
 		    "[service a]\nexec = x\nrestart = always\nprovides = p1, p2\n"
 		    "depends = b\nrespawn_delay = 5\nrespawn_max = 3\nrespawn_window = 30\n"
 		    "log = file\nlog_size = 64\nready_fd = 4\nready_timeout = 9\ncritical = yes\n"
-		    "user = www\ngroup = 33\n"
+		    "user = www\ngroup = 33\nworkdir = /srv\numask = 027\nnice = -3\n"
 		    "[service b]\ntype = oneshot\nexec = y\n", &cfg) == 0);
 	CHECK(strcmp(cfg.watchdog, "/dev/watchdog") == 0 && cfg.watchdog_timeout == 15);
 	s = &cfg.services[0];
@@ -97,6 +97,8 @@ static void test_config_values(void)
 	CHECK(s->log == LOG_FILE && s->log_size_kb == 64);
 	CHECK(s->ready_fd == 4 && s->ready_timeout == 9 && s->critical);
 	CHECK(strcmp(s->user, "www") == 0 && strcmp(s->group, "33") == 0);
+	CHECK(strcmp(s->workdir, "/srv") == 0 && s->umask == 027 && s->set_nice && s->nice == -3);
+	CHECK(cfg.services[1].umask == -1 && !cfg.services[1].set_nice);
 	CHECK(cfg.services[1].oneshot);
 }
 
@@ -121,6 +123,8 @@ static void test_config_errors(void)
 	CHECK(parse("[service a]\nexec = x\nprovides = 1,2,3,4,5\n", &cfg) < 0);
 	CHECK(parse("[system]\nwatchdog = /w\n[system]\n", &cfg) < 0);
 	CHECK(parse("[service a]\nexec = x\nuser = a b\n", &cfg) < 0);
+	CHECK(parse("[service a]\nexec = x\numask = 8\n", &cfg) < 0);
+	CHECK(parse("[service a]\nexec = x\nnice = -21\n", &cfg) < 0);
 	snprintf(big, sizeof(big), "[service a]\nexec = %0600d\n", 0);
 	CHECK(parse(big, &cfg) < 0);                                /* line too long */
 }
